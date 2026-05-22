@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 
-
 const SUPABASE_URL = "https://vfsimyiojhulpagnqzpb.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZmc2lteWlvamh1bHBhZ25xenBiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzODg4ODEsImV4cCI6MjA5NDk2NDg4MX0.eJJXnrMKOlm6bg7wZdKqbjiq66vVmmqD889NK1dUBL4";
 
@@ -63,6 +62,116 @@ const SEED_PLAYERS = [
 
 const positionColors = { Striker: "#ef4444", Midfielder: "#f59e0b", Defender: "#3b82f6" };
 const positionEmoji = { Striker: "⚡", Midfielder: "🎯", Defender: "🛡️" };
+const STARMAN = "✍️Starman⭐️";
+
+function generateInsights(players) {
+  if (!players.length) return [];
+  const insights = [];
+
+  const sorted_goals = [...players].sort((a, b) => b.goals - a.goals);
+  const sorted_assists = [...players].sort((a, b) => b.assists - a.assists);
+  const sorted_cs = [...players].sort((a, b) => b.clean_sheets - a.clean_sheets);
+
+  const top1 = sorted_goals[0];
+  const top2 = sorted_goals[1];
+  const top3 = sorted_goals[2];
+  const topA1 = sorted_assists[0];
+  const topA2 = sorted_assists[1];
+  const topCS1 = sorted_cs[0];
+  const topCS2 = sorted_cs[1];
+
+  const totalGoals = players.reduce((a, p) => a + p.goals, 0);
+  const totalAssists = players.reduce((a, p) => a + p.assists, 0);
+  const strikers = players.filter(p => p.position === "Striker");
+  const mids = players.filter(p => p.position === "Midfielder");
+  const defs = players.filter(p => p.position === "Defender");
+  const strikerGoals = strikers.reduce((a, p) => a + p.goals, 0);
+  const midGoals = mids.reduce((a, p) => a + p.goals, 0);
+  const defGoals = defs.reduce((a, p) => a + p.goals, 0);
+
+  // Top scorer insight
+  if (top1?.goals > 0) {
+    const gap = top1.goals - (top2?.goals || 0);
+    if (gap >= 5) {
+      insights.push({ emoji: "🔥", color: "#ef4444", text: `${top1.name} is in a league of his own — ${top1.goals} goals and ${gap} clear of the pack. Nobody is catching this man.` });
+    } else if (gap >= 2) {
+      insights.push({ emoji: "⚽", color: "#ef4444", text: `${top1.name} leads the golden boot race with ${top1.goals} goals, ${gap} ahead of ${top2?.name}. The gap is real.` });
+    } else {
+      insights.push({ emoji: "⚽", color: "#ef4444", text: `${top1.name} and ${top2?.name} are neck and neck at the top — ${top1.goals} vs ${top2?.goals} goals. This race is not over.` });
+    }
+  }
+
+  // Double threat insight
+  if (top1?.goals > 0 && top1?.assists > 0) {
+    const contrib = top1.goals + top1.assists;
+    if (contrib >= 15) {
+      insights.push({ emoji: "👑", color: "#f59e0b", text: `${top1.name} has ${top1.goals} goals AND ${top1.assists} assists — ${contrib} direct contributions. This man is the liga.` });
+    } else if (contrib >= 8) {
+      insights.push({ emoji: "💥", color: "#f59e0b", text: `${top1.name} is not just scoring — ${top1.goals} goals and ${top1.assists} assists make him the most complete player in the liga right now.` });
+    }
+  }
+
+  // Top assist provider
+  if (topA1?.assists > 0) {
+    if (topA1.name === top1?.name) {
+      insights.push({ emoji: "🎯", color: "#f59e0b", text: `${topA1.name} tops both the goals AND assists chart. When he's on the pitch, something is always happening.` });
+    } else {
+      insights.push({ emoji: "🎯", color: "#f59e0b", text: `${topA1.name} is the liga's chief creator with ${topA1.assists} assists. Behind every great goal, there's a pass from ${topA1.name}.` });
+    }
+  }
+
+  // Assist battle
+  if (topA1?.assists > 0 && topA2?.assists > 0 && topA1.assists - topA2.assists <= 1) {
+    insights.push({ emoji: "🤝", color: "#f59e0b", text: `${topA1.name} and ${topA2.name} are both on ${topA1.assists} and ${topA2.assists} assists respectively. The playmaker crown is still up for grabs.` });
+  }
+
+  // Clean sheet wall
+  if (topCS1?.clean_sheets > 0) {
+    if (topCS1.clean_sheets >= 15) {
+      insights.push({ emoji: "🧱", color: "#3b82f6", text: `${topCS1.clean_sheets} clean sheets for ${topCS1.name}. At this point he's not a defender — he's a wall. A whole wall.` });
+    } else if (topCS1.clean_sheets >= 8) {
+      insights.push({ emoji: "🛡️", color: "#3b82f6", text: `${topCS1.name} leads the clean sheet chart with ${topCS1.clean_sheets}. Attackers dread facing this man.` });
+    } else {
+      insights.push({ emoji: "🧤", color: "#3b82f6", text: `${topCS1.name} is the most reliable defender in the liga with ${topCS1.clean_sheets} clean sheets this season.` });
+    }
+  }
+
+  // CS battle
+  if (topCS1?.clean_sheets > 0 && topCS2?.clean_sheets > 0) {
+    insights.push({ emoji: "🔐", color: "#3b82f6", text: `${topCS1.name} (${topCS1.clean_sheets} CS) and ${topCS2.name} (${topCS2.clean_sheets} CS) are the two best defenders in Greedie Liga. Tough to score past either of them.` });
+  }
+
+  // Position domination
+  const topPos = strikerGoals >= midGoals && strikerGoals >= defGoals ? "Strikers" : midGoals >= defGoals ? "Midfielders" : "Defenders";
+  const topPosGoals = topPos === "Strikers" ? strikerGoals : topPos === "Midfielders" ? midGoals : defGoals;
+  const pct = totalGoals > 0 ? Math.round((topPosGoals / totalGoals) * 100) : 0;
+  if (pct > 0) {
+    insights.push({ emoji: "📊", color: "#a855f7", text: `${topPos} are responsible for ${pct}% of all goals in the liga (${topPosGoals} out of ${totalGoals}). The numbers don't lie.` });
+  }
+
+  // Defender who scores
+  const scoringDef = [...defs].sort((a, b) => b.goals - a.goals)[0];
+  if (scoringDef?.goals >= 3) {
+    insights.push({ emoji: "😤", color: "#3b82f6", text: `${scoringDef.name} is a defender with ${scoringDef.goals} goals. Somebody tell him to stay back — actually, don't.` });
+  }
+
+  // Striker with zero goals
+  const silentStriker = strikers.find(p => p.goals === 0);
+  if (silentStriker) {
+    insights.push({ emoji: "🤫", color: "#666", text: `${silentStriker.name} is registered as a Striker but is yet to open his account. The liga is watching and waiting.` });
+  }
+
+  // Top scorer far ahead of position peers
+  const topMid = [...mids].sort((a, b) => b.goals - a.goals)[0];
+  if (topMid?.goals >= 6) {
+    insights.push({ emoji: "🌪️", color: "#f59e0b", text: `${topMid.name} is a midfielder but you wouldn't know it — ${topMid.goals} goals this season. More dangerous than most strikers.` });
+  }
+
+  // Overall liga summary
+  insights.push({ emoji: "📋", color: "#888", text: `${players.length} players registered. ${totalGoals} goals scored. ${totalAssists} assists recorded. Greedie Liga is alive and buzzing.` });
+
+  return insights;
+}
 
 async function sbFetch(path, options = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: HEADERS, ...options });
@@ -102,6 +211,29 @@ function LeaderRow({ rank, name, value, max, color, label }) {
           <span style={{ color, fontWeight: 800, fontFamily: "'Bebas Neue', cursive", fontSize: 18 }}>{value} <span style={{ fontSize: 10, color: "#666", fontWeight: 400 }}>{label}</span></span>
         </div>
         <MiniBar value={value} max={max} color={color} />
+      </div>
+    </div>
+  );
+}
+
+function InsightCard({ emoji, color, text, index }) {
+  return (
+    <div style={{
+      background: `linear-gradient(135deg, ${color}0d, #0f0f23)`,
+      border: `1px solid ${color}2a`,
+      borderRadius: 16,
+      padding: "18px 20px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
+      animation: `fadeIn 0.4s ease ${index * 0.07}s both`,
+    }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ fontSize: 26, lineHeight: 1, marginTop: 2 }}>{emoji}</div>
+        <div style={{ flex: 1, color: "#ddd", fontSize: 14, lineHeight: 1.6 }}>{text}</div>
+      </div>
+      <div style={{ textAlign: "right", fontSize: 12, color: color, fontWeight: 700, fontStyle: "italic", opacity: 0.9 }}>
+        {STARMAN}
       </div>
     </div>
   );
@@ -189,9 +321,11 @@ export default function App() {
   const assisters = [...players].filter(p => p.assists > 0).sort((a, b) => b.assists - a.assists);
   const keepers = [...players].filter(p => p.clean_sheets > 0).sort((a, b) => b.clean_sheets - a.clean_sheets);
   const filteredPlayers = [...players].filter(p => filterPos === "All" || p.position === filterPos).filter(p => p.name.toLowerCase().includes(searchQ.toLowerCase())).sort((a, b) => b[sortBy] - a[sortBy]);
+  const insights = generateInsights(players);
 
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: "📊" },
+    { id: "insights", label: "Insights", icon: "💬" },
     { id: "scorers", label: "Scorers", icon: "⚽" },
     { id: "assists", label: "Assists", icon: "🎯" },
     { id: "cleansheets", label: "Clean Sheets", icon: "🧤" },
@@ -220,6 +354,8 @@ export default function App() {
         * { box-sizing: border-box; margin: 0; padding: 0; }
         ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #0f0f23; } ::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 2px; }
         input, select { outline: none; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
       `}</style>
 
       {toast && (
@@ -237,7 +373,7 @@ export default function App() {
           </div>
           <div style={{ display: "flex", gap: 2, overflowX: "auto", paddingBottom: 1 }}>
             {tabs.map(t => (
-              <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "9px 14px", background: activeTab === t.id ? "rgba(59,130,246,0.15)" : "transparent", border: "none", borderBottom: activeTab === t.id ? "2px solid #3b82f6" : "2px solid transparent", color: activeTab === t.id ? "#3b82f6" : "#666", cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", borderRadius: "6px 6px 0 0" }}>
+              <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "9px 12px", background: activeTab === t.id ? "rgba(59,130,246,0.15)" : "transparent", border: "none", borderBottom: activeTab === t.id ? "2px solid #3b82f6" : "2px solid transparent", color: activeTab === t.id ? "#3b82f6" : "#666", cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", borderRadius: "6px 6px 0 0" }}>
                 {t.icon} {t.label}
               </button>
             ))}
@@ -285,6 +421,29 @@ export default function App() {
                 );
               })}
             </div>
+            {/* Teaser for insights */}
+            <div onClick={() => setActiveTab("insights")} style={{ background: "linear-gradient(135deg, #a855f711, #07071a)", border: "1px solid #a855f733", borderRadius: 16, padding: 18, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ fontSize: 32 }}>💬</div>
+              <div>
+                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: "#a855f7" }}>LIGA INSIGHTS</div>
+                <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{insights.length} fresh takes from {STARMAN} — tap to read</div>
+              </div>
+              <div style={{ marginLeft: "auto", color: "#a855f7", fontSize: 18 }}>→</div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "insights" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+              <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 24, letterSpacing: 3, color: "#a855f7" }}>💬 LIGA INSIGHTS</div>
+            </div>
+            <div style={{ background: "#0f0f23", border: "1px solid #a855f733", borderRadius: 12, padding: "12px 16px", fontSize: 12, color: "#888", lineHeight: 1.5 }}>
+              Auto-generated from live stats. Updates every time stats change. Signed by {STARMAN}
+            </div>
+            {insights.map((ins, i) => (
+              <InsightCard key={i} index={i} emoji={ins.emoji} color={ins.color} text={ins.text} />
+            ))}
           </div>
         )}
 
@@ -400,4 +559,3 @@ export default function App() {
     </div>
   );
 }
-
