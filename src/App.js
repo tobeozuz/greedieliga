@@ -539,7 +539,7 @@ export default function App() {
                   <span style={{ fontSize: 10, color: positionColors[p.position], fontWeight: 600 }}>{positionEmoji[p.position]}</span>
                   <span style={{ textAlign: "center", color: p.goals > 0 ? "#ef4444" : "#444", fontWeight: 700 }}>{p.goals}</span>
                   <span style={{ textAlign: "center", color: p.assists > 0 ? "#f59e0b" : "#444", fontWeight: 700 }}>{p.assists}</span>
-                  <span style={{ textAlign: "center", color: p.clean_sheets > 0 ? "#3b82f6" : "#444", fontWeight: 700 }}>{p.clean_sheets}</span>
+                  <span style={{ textAlign: "center", color: p.clean_sheets > 0 ? "#3b82f6" : "#444", fontWeight: 700 }}>{p.position === "Defender" ? p.clean_sheets : "—"}</span>
                   {isAdmin && (
                     <button onClick={() => { setEditPlayer(p.name); setEditForm({...p}); }} style={{ background: "rgba(59,130,246,0.15)", border: "none", borderRadius: 6, color: "#3b82f6", cursor: "pointer", padding: "5px 8px", fontSize: 11 }}>Edit</button>
                   )}
@@ -613,12 +613,18 @@ export default function App() {
           <div style={{ background: "#0f0f23", border: "1px solid #2a2a5e", borderRadius: 20, padding: 28, width: "100%", maxWidth: 400 }}>
             <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 22, letterSpacing: 2, marginBottom: 20, color: "#3b82f6" }}>EDIT · {editPlayer}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {[["Goals","goals"],["Assists","assists"],["Clean Sheets","clean_sheets"]].map(([label, key]) => (
+              {[["Goals","goals"],["Assists","assists"]].map(([label, key]) => (
                 <div key={key}>
                   <div style={{ fontSize: 11, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>
                   <input type="number" value={editForm[key]} onChange={e => setEditForm({...editForm, [key]: e.target.value})} style={{ width: "100%", background: "#1a1a3e", border: "1px solid #2a2a5e", borderRadius: 8, padding: "12px 14px", color: "#fff", fontSize: 20, fontWeight: 700 }} />
                 </div>
               ))}
+              {editForm.position === "Defender" && (
+                <div>
+                  <div style={{ fontSize: 11, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Clean Sheets</div>
+                  <input type="number" value={editForm.clean_sheets} onChange={e => setEditForm({...editForm, clean_sheets: e.target.value})} style={{ width: "100%", background: "#1a1a3e", border: "1px solid #2a2a5e", borderRadius: 8, padding: "12px 14px", color: "#fff", fontSize: 20, fontWeight: 700 }} />
+                </div>
+              )}
               <div>
                 <div style={{ fontSize: 11, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Position</div>
                 <select value={editForm.position} onChange={e => setEditForm({...editForm, position: e.target.value})} style={{ width: "100%", background: "#1a1a3e", border: "1px solid #2a2a5e", borderRadius: 8, padding: "12px 14px", color: "#fff", fontSize: 14 }}>
