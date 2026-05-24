@@ -74,7 +74,6 @@ function generateInsights(players) {
 
   const top1 = sorted_goals[0];
   const top2 = sorted_goals[1];
-  const top3 = sorted_goals[2];
   const topA1 = sorted_assists[0];
   const topA2 = sorted_assists[1];
   const topCS1 = sorted_cs[0];
@@ -89,7 +88,6 @@ function generateInsights(players) {
   const midGoals = mids.reduce((a, p) => a + p.goals, 0);
   const defGoals = defs.reduce((a, p) => a + p.goals, 0);
 
-  // Top scorer insight
   if (top1?.goals > 0) {
     const gap = top1.goals - (top2?.goals || 0);
     if (gap >= 5) {
@@ -101,7 +99,6 @@ function generateInsights(players) {
     }
   }
 
-  // Double threat insight
   if (top1?.goals > 0 && top1?.assists > 0) {
     const contrib = top1.goals + top1.assists;
     if (contrib >= 15) {
@@ -111,7 +108,6 @@ function generateInsights(players) {
     }
   }
 
-  // Top assist provider
   if (topA1?.assists > 0) {
     if (topA1.name === top1?.name) {
       insights.push({ emoji: "🎯", color: "#f59e0b", text: `${topA1.name} tops both the goals AND assists chart. When he's on the pitch, something is always happening.` });
@@ -120,12 +116,10 @@ function generateInsights(players) {
     }
   }
 
-  // Assist battle
   if (topA1?.assists > 0 && topA2?.assists > 0 && topA1.assists - topA2.assists <= 1) {
     insights.push({ emoji: "🤝", color: "#f59e0b", text: `${topA1.name} and ${topA2.name} are both on ${topA1.assists} and ${topA2.assists} assists respectively. The playmaker crown is still up for grabs.` });
   }
 
-  // Clean sheet wall
   if (topCS1?.clean_sheets > 0) {
     if (topCS1.clean_sheets >= 15) {
       insights.push({ emoji: "🧱", color: "#3b82f6", text: `${topCS1.clean_sheets} clean sheets for ${topCS1.name}. At this point he's not a defender — he's a wall. A whole wall.` });
@@ -136,12 +130,10 @@ function generateInsights(players) {
     }
   }
 
-  // CS battle
   if (topCS1?.clean_sheets > 0 && topCS2?.clean_sheets > 0) {
     insights.push({ emoji: "🔐", color: "#3b82f6", text: `${topCS1.name} (${topCS1.clean_sheets} CS) and ${topCS2.name} (${topCS2.clean_sheets} CS) are the two best defenders in Greedie Liga. Tough to score past either of them.` });
   }
 
-  // Position domination
   const topPos = strikerGoals >= midGoals && strikerGoals >= defGoals ? "Strikers" : midGoals >= defGoals ? "Midfielders" : "Defenders";
   const topPosGoals = topPos === "Strikers" ? strikerGoals : topPos === "Midfielders" ? midGoals : defGoals;
   const pct = totalGoals > 0 ? Math.round((topPosGoals / totalGoals) * 100) : 0;
@@ -149,25 +141,21 @@ function generateInsights(players) {
     insights.push({ emoji: "📊", color: "#a855f7", text: `${topPos} are responsible for ${pct}% of all goals in the liga (${topPosGoals} out of ${totalGoals}). The numbers don't lie.` });
   }
 
-  // Defender who scores
   const scoringDef = [...defs].sort((a, b) => b.goals - a.goals)[0];
   if (scoringDef?.goals >= 3) {
     insights.push({ emoji: "😤", color: "#3b82f6", text: `${scoringDef.name} is a defender with ${scoringDef.goals} goals. Somebody tell him to stay back — actually, don't.` });
   }
 
-  // Striker with zero goals
   const silentStriker = strikers.find(p => p.goals === 0);
   if (silentStriker) {
     insights.push({ emoji: "🤫", color: "#666", text: `${silentStriker.name} is registered as a Striker but is yet to open his account. The liga is watching and waiting.` });
   }
 
-  // Top scorer far ahead of position peers
   const topMid = [...mids].sort((a, b) => b.goals - a.goals)[0];
   if (topMid?.goals >= 6) {
     insights.push({ emoji: "🌪️", color: "#f59e0b", text: `${topMid.name} is a midfielder but you wouldn't know it — ${topMid.goals} goals this season. More dangerous than most strikers.` });
   }
 
-  // Overall liga summary
   insights.push({ emoji: "📋", color: "#888", text: `${players.length} players registered. ${totalGoals} goals scored. ${totalAssists} assists recorded. Greedie Liga is alive and buzzing.` });
 
   return insights;
@@ -254,6 +242,12 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
+  // ── Admin PIN state ──────────────────────────────────────────
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState(false);
+  // ─────────────────────────────────────────────────────────────
+
   useEffect(() => { loadPlayers(); }, []);
 
   async function loadPlayers() {
@@ -277,6 +271,24 @@ export default function App() {
   function showToast(msg, type = "success") {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2500);
+  }
+
+  function handlePinSubmit() {
+    if (pinInput === "4031") {
+      setIsAdmin(true);
+      setPinError(false);
+      setPinInput("");
+    } else {
+      setPinError(true);
+      setPinInput("");
+    }
+  }
+
+  function handleLock() {
+    setIsAdmin(false);
+    setPinInput("");
+    setPinError(false);
+    setShowAdd(false);
   }
 
   async function saveEdit() {
@@ -421,7 +433,6 @@ export default function App() {
                 );
               })}
             </div>
-            {/* Teaser for insights */}
             <div onClick={() => setActiveTab("insights")} style={{ background: "linear-gradient(135deg, #a855f711, #07071a)", border: "1px solid #a855f733", borderRadius: 16, padding: 18, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ fontSize: 32 }}>💬</div>
               <div>
@@ -485,46 +496,114 @@ export default function App() {
                 <option value="goals">Goals</option><option value="assists">Assists</option><option value="clean_sheets">Clean Sheets</option>
               </select>
             </div>
-            <button onClick={() => setShowAdd(!showAdd)} style={{ background: showAdd ? "#1a1a3e" : "linear-gradient(135deg, #1e3a8a, #3b82f6)", border: "none", borderRadius: 10, padding: "12px 20px", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>
-              {showAdd ? "✕ Cancel" : "+ Add New Player"}
-            </button>
-            {showAdd && (
-              <div style={{ background: "#0f0f23", border: "1px solid #2a2a5e", borderRadius: 14, padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, letterSpacing: 2, color: "#3b82f6" }}>NEW PLAYER</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  {[["Name","name","text"],["Goals","goals","number"],["Assists","assists","number"],["Clean Sheets","clean_sheets","number"]].map(([label, key, type]) => (
-                    <div key={key}>
-                      <div style={{ fontSize: 11, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>
-                      <input type={type} value={addForm[key]} onChange={e => setAddForm({...addForm, [key]: e.target.value})} style={{ width: "100%", background: "#1a1a3e", border: "1px solid #2a2a5e", borderRadius: 8, padding: "9px 12px", color: "#fff", fontSize: 13 }} />
-                    </div>
-                  ))}
-                  <div style={{ gridColumn: "1/-1" }}>
-                    <div style={{ fontSize: 11, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Position</div>
-                    <select value={addForm.position} onChange={e => setAddForm({...addForm, position: e.target.value})} style={{ width: "100%", background: "#1a1a3e", border: "1px solid #2a2a5e", borderRadius: 8, padding: "9px 12px", color: "#fff", fontSize: 13 }}>
-                      <option>Defender</option><option>Midfielder</option><option>Striker</option>
-                    </select>
-                  </div>
-                </div>
-                <button onClick={addPlayer} disabled={saving} style={{ background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: "12px", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14, opacity: saving ? 0.6 : 1 }}>
-                  {saving ? "Adding..." : "✓ Add Player"}
+
+            {/* Add New Player — admin only */}
+            {isAdmin && (
+              <>
+                <button onClick={() => setShowAdd(!showAdd)} style={{ background: showAdd ? "#1a1a3e" : "linear-gradient(135deg, #1e3a8a, #3b82f6)", border: "none", borderRadius: 10, padding: "12px 20px", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>
+                  {showAdd ? "✕ Cancel" : "+ Add New Player"}
                 </button>
-              </div>
+                {showAdd && (
+                  <div style={{ background: "#0f0f23", border: "1px solid #2a2a5e", borderRadius: 14, padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, letterSpacing: 2, color: "#3b82f6" }}>NEW PLAYER</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      {[["Name","name","text"],["Goals","goals","number"],["Assists","assists","number"],["Clean Sheets","clean_sheets","number"]].map(([label, key, type]) => (
+                        <div key={key}>
+                          <div style={{ fontSize: 11, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>
+                          <input type={type} value={addForm[key]} onChange={e => setAddForm({...addForm, [key]: e.target.value})} style={{ width: "100%", background: "#1a1a3e", border: "1px solid #2a2a5e", borderRadius: 8, padding: "9px 12px", color: "#fff", fontSize: 13 }} />
+                        </div>
+                      ))}
+                      <div style={{ gridColumn: "1/-1" }}>
+                        <div style={{ fontSize: 11, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Position</div>
+                        <select value={addForm.position} onChange={e => setAddForm({...addForm, position: e.target.value})} style={{ width: "100%", background: "#1a1a3e", border: "1px solid #2a2a5e", borderRadius: 8, padding: "9px 12px", color: "#fff", fontSize: 13 }}>
+                          <option>Defender</option><option>Midfielder</option><option>Striker</option>
+                        </select>
+                      </div>
+                    </div>
+                    <button onClick={addPlayer} disabled={saving} style={{ background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: "12px", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14, opacity: saving ? 0.6 : 1 }}>
+                      {saving ? "Adding..." : "✓ Add Player"}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
+
+            {/* Player list */}
             <div style={{ background: "#0f0f23", borderRadius: 16, border: "1px solid #1a1a3e", overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 44px 44px 44px 48px", padding: "10px 14px", borderBottom: "1px solid #1a1a3e", fontSize: 10, color: "#555", textTransform: "uppercase", letterSpacing: 1 }}>
-                <span>Player</span><span>Pos</span><span style={{textAlign:"center"}}>G</span><span style={{textAlign:"center"}}>A</span><span style={{textAlign:"center"}}>CS</span><span></span>
+              <div style={{ display: "grid", gridTemplateColumns: isAdmin ? "1fr 80px 44px 44px 44px 48px" : "1fr 80px 44px 44px 44px", padding: "10px 14px", borderBottom: "1px solid #1a1a3e", fontSize: 10, color: "#555", textTransform: "uppercase", letterSpacing: 1 }}>
+                <span>Player</span><span>Pos</span><span style={{textAlign:"center"}}>G</span><span style={{textAlign:"center"}}>A</span><span style={{textAlign:"center"}}>CS</span>{isAdmin && <span></span>}
               </div>
               {filteredPlayers.map(p => (
-                <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr 80px 44px 44px 44px 48px", padding: "11px 14px", borderBottom: "1px solid #0d0d1f", alignItems: "center" }}>
+                <div key={p.id} style={{ display: "grid", gridTemplateColumns: isAdmin ? "1fr 80px 44px 44px 44px 48px" : "1fr 80px 44px 44px 44px", padding: "11px 14px", borderBottom: "1px solid #0d0d1f", alignItems: "center" }}>
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</span>
                   <span style={{ fontSize: 10, color: positionColors[p.position], fontWeight: 600 }}>{positionEmoji[p.position]}</span>
                   <span style={{ textAlign: "center", color: p.goals > 0 ? "#ef4444" : "#444", fontWeight: 700 }}>{p.goals}</span>
                   <span style={{ textAlign: "center", color: p.assists > 0 ? "#f59e0b" : "#444", fontWeight: 700 }}>{p.assists}</span>
                   <span style={{ textAlign: "center", color: p.clean_sheets > 0 ? "#3b82f6" : "#444", fontWeight: 700 }}>{p.clean_sheets}</span>
-                  <button onClick={() => { setEditPlayer(p.name); setEditForm({...p}); }} style={{ background: "rgba(59,130,246,0.15)", border: "none", borderRadius: 6, color: "#3b82f6", cursor: "pointer", padding: "5px 8px", fontSize: 11 }}>Edit</button>
+                  {isAdmin && (
+                    <button onClick={() => { setEditPlayer(p.name); setEditForm({...p}); }} style={{ background: "rgba(59,130,246,0.15)", border: "none", borderRadius: 6, color: "#3b82f6", cursor: "pointer", padding: "5px 8px", fontSize: 11 }}>Edit</button>
+                  )}
                 </div>
               ))}
             </div>
+
+            {/* ── Admin PIN box ── */}
+            <div style={{
+              marginTop: 8,
+              padding: 20,
+              background: "#0d0d2b",
+              borderRadius: 14,
+              border: isAdmin ? "1px solid #22c55e" : "1px solid #1e1e4a",
+              textAlign: "center",
+            }}>
+              {isAdmin ? (
+                <div>
+                  <div style={{ color: "#22c55e", fontSize: 13, fontWeight: 600, marginBottom: 10 }}>
+                    🔓 Admin mode active
+                  </div>
+                  <button
+                    onClick={handleLock}
+                    style={{ background: "transparent", border: "1px solid #ef4444", color: "#ef4444", borderRadius: 8, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+                  >
+                    🔒 Lock
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ color: "#444", fontSize: 12, marginBottom: 12, letterSpacing: 1, textTransform: "uppercase" }}>Admin access</div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center", alignItems: "center" }}>
+                    <input
+                      type="password"
+                      placeholder="Enter PIN"
+                      value={pinInput}
+                      onChange={e => { setPinInput(e.target.value); setPinError(false); }}
+                      onKeyDown={e => e.key === "Enter" && handlePinSubmit()}
+                      style={{
+                        background: "#1a1a3e",
+                        border: pinError ? "1px solid #ef4444" : "1px solid #2d2d6b",
+                        color: "#fff",
+                        borderRadius: 8,
+                        padding: "10px 16px",
+                        fontSize: 16,
+                        width: 130,
+                        textAlign: "center",
+                      }}
+                    />
+                    <button
+                      onClick={handlePinSubmit}
+                      style={{ background: "#6d28d9", color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", cursor: "pointer", fontSize: 14, fontWeight: 700 }}
+                    >
+                      Unlock
+                    </button>
+                  </div>
+                  {pinError && (
+                    <div style={{ color: "#ef4444", fontSize: 12, marginTop: 10 }}>Wrong PIN. Try again.</div>
+                  )}
+                </div>
+              )}
+            </div>
+            {/* ── End PIN box ── */}
+
           </div>
         )}
       </div>
