@@ -291,6 +291,22 @@ export default function App() {
     setShowAdd(false);
   }
 
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  async function deletePlayer(player) {
+    setSaving(true);
+    try {
+      await sbFetch(`players?id=eq.${player.id}`, { method: "DELETE" });
+      await loadPlayers();
+      setConfirmDelete(null);
+      showToast(`${player.name} removed ✅`);
+    } catch (e) {
+      showToast("Failed to delete.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveEdit() {
     setSaving(true);
     try {
@@ -530,11 +546,11 @@ export default function App() {
 
             {/* Player list */}
             <div style={{ background: "#0f0f23", borderRadius: 16, border: "1px solid #1a1a3e", overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: isAdmin ? "1fr 80px 44px 44px 44px 48px" : "1fr 80px 44px 44px 44px", padding: "10px 14px", borderBottom: "1px solid #1a1a3e", fontSize: 10, color: "#555", textTransform: "uppercase", letterSpacing: 1 }}>
-                <span>Player</span><span>Pos</span><span style={{textAlign:"center"}}>G</span><span style={{textAlign:"center"}}>A</span><span style={{textAlign:"center"}}>CS</span>{isAdmin && <span></span>}
+              <div style={{ display: "grid", gridTemplateColumns: isAdmin ? "1fr 60px 44px 44px 44px 48px 48px" : "1fr 80px 44px 44px 44px", padding: "10px 14px", borderBottom: "1px solid #1a1a3e", fontSize: 10, color: "#555", textTransform: "uppercase", letterSpacing: 1 }}>
+                <span>Player</span><span>Pos</span><span style={{textAlign:"center"}}>G</span><span style={{textAlign:"center"}}>A</span><span style={{textAlign:"center"}}>CS</span>{isAdmin && <span></span>}{isAdmin && <span></span>}
               </div>
               {filteredPlayers.map(p => (
-                <div key={p.id} style={{ display: "grid", gridTemplateColumns: isAdmin ? "1fr 80px 44px 44px 44px 48px" : "1fr 80px 44px 44px 44px", padding: "11px 14px", borderBottom: "1px solid #0d0d1f", alignItems: "center" }}>
+                <div key={p.id} style={{ display: "grid", gridTemplateColumns: isAdmin ? "1fr 60px 44px 44px 44px 48px 48px" : "1fr 80px 44px 44px 44px", padding: "11px 14px", borderBottom: "1px solid #0d0d1f", alignItems: "center" }}>
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</span>
                   <span style={{ fontSize: 10, color: positionColors[p.position], fontWeight: 600 }}>{positionEmoji[p.position]}</span>
                   <span style={{ textAlign: "center", color: p.goals > 0 ? "#ef4444" : "#444", fontWeight: 700 }}>{p.goals}</span>
@@ -542,6 +558,9 @@ export default function App() {
                   <span style={{ textAlign: "center", color: p.clean_sheets > 0 ? "#3b82f6" : "#444", fontWeight: 700 }}>{p.position === "Defender" ? p.clean_sheets : "—"}</span>
                   {isAdmin && (
                     <button onClick={() => { setEditPlayer(p.name); setEditForm({...p}); }} style={{ background: "rgba(59,130,246,0.15)", border: "none", borderRadius: 6, color: "#3b82f6", cursor: "pointer", padding: "5px 8px", fontSize: 11 }}>Edit</button>
+                  )}
+                  {isAdmin && (
+                    <button onClick={() => setConfirmDelete(p)} style={{ background: "rgba(239,68,68,0.15)", border: "none", borderRadius: 6, color: "#ef4444", cursor: "pointer", padding: "5px 8px", fontSize: 11 }}>Del</button>
                   )}
                 </div>
               ))}
@@ -607,6 +626,25 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {confirmDelete && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}>
+          <div style={{ background: "#0f0f23", border: "1px solid #ef444455", borderRadius: 20, padding: 28, width: "100%", maxWidth: 360, textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🗑️</div>
+            <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 22, letterSpacing: 2, color: "#ef4444", marginBottom: 8 }}>DELETE PLAYER</div>
+            <div style={{ color: "#aaa", fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
+              Are you sure you want to remove <span style={{ color: "#fff", fontWeight: 700 }}>{confirmDelete.name}</span> from the liga?<br />
+              <span style={{ color: "#ef4444", fontSize: 12 }}>This cannot be undone.</span>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setConfirmDelete(null)} style={{ flex: 1, background: "#1a1a3e", border: "none", borderRadius: 10, padding: 13, color: "#888", cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+              <button onClick={() => deletePlayer(confirmDelete)} disabled={saving} style={{ flex: 1, background: "linear-gradient(135deg, #7f1d1d, #ef4444)", border: "none", borderRadius: 10, padding: 13, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 14, opacity: saving ? 0.6 : 1 }}>
+                {saving ? "Deleting..." : "Yes, Remove"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editPlayer && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}>
