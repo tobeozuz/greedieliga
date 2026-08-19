@@ -356,6 +356,9 @@ export default function App() {
     { id: "insights", label: "Insights", icon: "💬" },
     { id: "scorers", label: "Scorers", icon: "⚽" },
     { id: "assists", label: "Assists", icon: "🎯" },
+    { id: "ga", label: "G/A", icon: "🏅" },
+    { id: "inv", label: "INV%", icon: "📈" },
+    { id: "ratio", label: "Ratio", icon: "⚖️" },
     { id: "cleansheets", label: "Clean Sheets", icon: "🧤" },
     { id: "squad", label: "Squad", icon: "👥" },
   ];
@@ -420,9 +423,9 @@ export default function App() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
               {[
-                { label: "Golden Boot", player: topScorer, stat: topScorer?.goals, statLabel: "goals", color: "#ef4444", icon: "🥾" },
-                { label: "Playmaker", player: topAssist, stat: topAssist?.assists, statLabel: "assists", color: "#f59e0b", icon: "🎯" },
-                { label: "Iron Wall", player: topCS, stat: topCS?.clean_sheets, statLabel: "CS", color: "#3b82f6", icon: "🧤" },
+                { label: "Golden Boot", player: topScorer, stat: topScorer?.goals, statLabel: "goals", color: "#ef4444", icon: "🥾", tab: "ga" },
+                { label: "Playmaker", player: topAssist, stat: topAssist?.assists, statLabel: "assists", color: "#f59e0b", icon: "🎯", tab: "ga" },
+                { label: "Iron Wall", player: topCS, stat: topCS?.clean_sheets, statLabel: "CS", color: "#3b82f6", icon: "🧤", tab: "cleansheets" },
               ].map(({ label, player, stat, statLabel, color, icon }) => (
                 <div key={label} style={{ background: `linear-gradient(135deg, ${color}11, ${color}05)`, border: `1px solid ${color}33`, borderRadius: 14, padding: 16, textAlign: "center" }}>
                   <div style={{ fontSize: 24 }}>{icon}</div>
@@ -492,7 +495,179 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === "cleansheets" && (
+                {activeTab === "ga" && (() => {
+          const totalGoals = players.reduce((a, p) => a + p.goals, 0);
+          const gaPlayers = [...players]
+            .map(p => ({
+              ...p,
+              ga: p.goals + p.assists,
+              involvement: totalGoals > 0 ? Math.round(((p.goals + p.assists) / totalGoals) * 100) : 0,
+              ratio: p.assists > 0 ? (p.goals / p.assists).toFixed(1) : p.goals > 0 ? "∞" : "—",
+            }))
+            .filter(p => p.ga > 0)
+            .sort((a, b) => b.ga - a.ga || b.goals - a.goals);
+          const maxGA = Math.max(...gaPlayers.map(p => p.ga), 1);
+          const medals = { 0: "🥇", 1: "🥈", 2: "🥉" };
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Header */}
+              <div style={{ background: "linear-gradient(135deg, #1a0533, #0f0f23)", border: "1px solid #a855f733", borderRadius: 16, padding: 20 }}>
+                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 24, letterSpacing: 3, color: "#a855f7", marginBottom: 4 }}>🏅 GOALS + ASSISTS</div>
+                <div style={{ fontSize: 12, color: "#666" }}>Season rankings — combined goal contributions</div>
+              </div>
+
+              {/* Legend */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                {[
+                  { label: "G/A", desc: "Combined", color: "#a855f7" },
+                  { label: "G", desc: "Goals", color: "#ef4444" },
+                  { label: "A", desc: "Assists", color: "#f59e0b" },
+                  { label: "INV%", desc: "Involvement", color: "#22c55e" },
+                ].map(({ label, desc, color }) => (
+                  <div key={label} style={{ background: "#0f0f23", border: `1px solid ${color}33`, borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+                    <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, color, lineHeight: 1 }}>{label}</div>
+                    <div style={{ fontSize: 10, color: "#555", marginTop: 2 }}>{desc}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Player rows */}
+              <div style={{ background: "#0f0f23", borderRadius: 16, border: "1px solid #1a1a3e", overflow: "hidden" }}>
+                {gaPlayers.map((p, i) => (
+                  <div key={p.id} style={{
+                    padding: "14px 16px",
+                    borderBottom: "1px solid #0d0d1f",
+                    background: i < 3 ? `#a855f708` : "transparent",
+                    borderLeft: i < 3 ? "3px solid #a855f7" : "3px solid transparent",
+                  }}>
+                    {/* Row top: rank + name + G/A badge */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <div style={{ width: 28, textAlign: "center", fontSize: i < 3 ? 18 : 13, color: "#666", fontFamily: "'Bebas Neue', cursive", flexShrink: 0 }}>
+                        {medals[i] || i + 1}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: "#fff" }}>{p.name}</div>
+                        <div style={{ fontSize: 10, color: positionColors[p.position], fontWeight: 600, marginTop: 1 }}>{positionEmoji[p.position]} {p.position}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 28, color: "#a855f7", lineHeight: 1 }}>{p.ga}</div>
+                        <div style={{ fontSize: 10, color: "#555" }}>G/A</div>
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div style={{ marginBottom: 10 }}>
+                      <MiniBar value={p.ga} max={maxGA} color="#a855f7" />
+                    </div>
+
+                    {/* Stats row */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+                      <div style={{ background: "#ef444411", borderRadius: 8, padding: "6px 4px", textAlign: "center" }}>
+                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, color: "#ef4444" }}>{p.goals}</div>
+                        <div style={{ fontSize: 9, color: "#666" }}>GOALS</div>
+                      </div>
+                      <div style={{ background: "#f59e0b11", borderRadius: 8, padding: "6px 4px", textAlign: "center" }}>
+                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, color: "#f59e0b" }}>{p.assists}</div>
+                        <div style={{ fontSize: 9, color: "#666" }}>ASSISTS</div>
+                      </div>
+                      <div style={{ background: "#22c55e11", borderRadius: 8, padding: "6px 4px", textAlign: "center" }}>
+                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, color: "#22c55e" }}>{p.involvement}%</div>
+                        <div style={{ fontSize: 9, color: "#666" }}>INVOLV.</div>
+                      </div>
+                      <div style={{ background: "#38bdf811", borderRadius: 8, padding: "6px 4px", textAlign: "center" }}>
+                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, color: "#38bdf8" }}>{p.ratio}</div>
+                        <div style={{ fontSize: 9, color: "#666" }}>G/A RATIO</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Footer note */}
+              <div style={{ background: "#0f0f23", border: "1px solid #1a1a3e", borderRadius: 12, padding: "12px 16px", fontSize: 11, color: "#555", lineHeight: 1.6 }}>
+                <span style={{ color: "#a855f7" }}>INV%</span> = % of all liga goals the player directly contributed to &nbsp;·&nbsp; <span style={{ color: "#38bdf8" }}>G/A Ratio</span> = goals per assist (∞ means scorer with no assists)
+              </div>
+            </div>
+          );
+        })()}
+
+        {activeTab === "inv" && (() => {
+          const totalGoals = players.reduce((a, p) => a + p.goals, 0);
+          const invPlayers = [...players]
+            .map(p => ({ ...p, inv: totalGoals > 0 ? Math.round(((p.goals + p.assists) / totalGoals) * 100) : 0 }))
+            .filter(p => p.inv > 0)
+            .sort((a, b) => b.inv - a.inv || b.goals - a.goals);
+          const maxInv = Math.max(...invPlayers.map(p => p.inv), 1);
+          const medals = { 0: "🥇", 1: "🥈", 2: "🥉" };
+          return (
+            <div style={{ background: "#0f0f23", borderRadius: 16, padding: 20, border: "1px solid #1a1a3e" }}>
+              <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 24, letterSpacing: 3, marginBottom: 6, color: "#22c55e" }}>📈 GOAL INVOLVEMENT</div>
+              <div style={{ fontSize: 12, color: "#555", marginBottom: 20 }}>% of all liga goals each player directly contributed to (goals + assists ÷ total goals)</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {invPlayers.map((p, i) => (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: i < 3 ? "#22c55e11" : "transparent", borderRadius: 10, borderLeft: i < 3 ? "3px solid #22c55e" : "3px solid transparent" }}>
+                    <div style={{ width: 28, textAlign: "center", fontSize: i < 3 ? 18 : 13, color: "#666", fontFamily: "'Bebas Neue', cursive" }}>{medals[i] || i + 1}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <div>
+                          <span style={{ color: "#fff", fontWeight: 600, fontSize: 14 }}>{p.name}</span>
+                          <span style={{ fontSize: 10, color: positionColors[p.position], marginLeft: 8 }}>{positionEmoji[p.position]}</span>
+                        </div>
+                        <span style={{ color: "#22c55e", fontWeight: 800, fontFamily: "'Bebas Neue', cursive", fontSize: 20 }}>{p.inv}%</span>
+                      </div>
+                      <MiniBar value={p.inv} max={maxInv} color="#22c55e" />
+                      <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
+                        <span style={{ fontSize: 11, color: "#ef4444" }}>⚽ {p.goals}G</span>
+                        <span style={{ fontSize: 11, color: "#f59e0b" }}>🎯 {p.assists}A</span>
+                        <span style={{ fontSize: 11, color: "#666" }}>of {totalGoals} total goals</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {activeTab === "ratio" && (() => {
+          const ratioPlayers = [...players]
+            .filter(p => p.goals > 0 || p.assists > 0)
+            .map(p => ({
+              ...p,
+              ratioNum: p.assists > 0 ? p.goals / p.assists : p.goals > 0 ? 999 : 0,
+              ratioDisplay: p.assists > 0 ? (p.goals / p.assists).toFixed(2) : p.goals > 0 ? "∞" : "—",
+            }))
+            .sort((a, b) => b.ratioNum - a.ratioNum || b.goals - a.goals);
+          const medals = { 0: "🥇", 1: "🥈", 2: "🥉" };
+          return (
+            <div style={{ background: "#0f0f23", borderRadius: 16, padding: 20, border: "1px solid #1a1a3e" }}>
+              <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 24, letterSpacing: 3, marginBottom: 6, color: "#38bdf8" }}>⚖️ G/A RATIO</div>
+              <div style={{ fontSize: 12, color: "#555", marginBottom: 20 }}>Goals per assist — higher means more finisher, lower means more creator. ∞ = scorer with zero assists.</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {ratioPlayers.map((p, i) => (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: i < 3 ? "#38bdf811" : "transparent", borderRadius: 10, borderLeft: i < 3 ? "3px solid #38bdf8" : "3px solid transparent" }}>
+                    <div style={{ width: 28, textAlign: "center", fontSize: i < 3 ? 18 : 13, color: "#666", fontFamily: "'Bebas Neue', cursive" }}>{medals[i] || i + 1}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <div>
+                          <span style={{ color: "#fff", fontWeight: 600, fontSize: 14 }}>{p.name}</span>
+                          <span style={{ fontSize: 10, color: positionColors[p.position], marginLeft: 8 }}>{positionEmoji[p.position]}</span>
+                        </div>
+                        <span style={{ color: "#38bdf8", fontWeight: 800, fontFamily: "'Bebas Neue', cursive", fontSize: 22 }}>{p.ratioDisplay}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 16 }}>
+                        <span style={{ fontSize: 11, color: "#ef4444" }}>⚽ {p.goals} goals</span>
+                        <span style={{ fontSize: 11, color: "#f59e0b" }}>🎯 {p.assists} assists</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+                {activeTab === "cleansheets" && (
           <div style={{ background: "#0f0f23", borderRadius: 16, padding: 20, border: "1px solid #1a1a3e" }}>
             <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 24, letterSpacing: 3, marginBottom: 20, color: "#3b82f6" }}>🧤 CLEAN SHEETS</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
