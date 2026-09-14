@@ -276,92 +276,79 @@ function drawShareFooter(ctx, w, h) {
 
 // highlights: 3 spotlight chips ({label,name,value,statLabel,color}).
 // players: full squad, each stat row shows Goals, Assists and Clean Sheets together.
-function buildOverviewShareCard(highlights, players) {
+// Three vertical leaderboards side by side: Top Scorers | Top Assists | Clean Sheets — full lists, ranked.
+function buildLeaderboardsShareCard(scorers, assisters, keepers) {
   const w = 1080;
-  const headerH = 230;
-  const highlightH = 170;
-  const chipBoxH = 140;
-  const tableHeaderRowH = 50;
-  const rowH = 38;
+  const headerH = 290;
+  const colHeaderH = 66;
+  const rowH = 40;
   const footerH = 130;
   const padBottom = 30;
-  const h = headerH + highlightH + tableHeaderRowH + players.length * rowH + footerH + padBottom;
+  const maxRows = Math.max(scorers.length, assisters.length, keepers.length, 1);
+  const h = headerH + colHeaderH + maxRows * rowH + footerH + padBottom;
 
   const c = newShareCanvas(w, h);
   const ctx = c.getContext("2d");
   paintBrandBg(ctx, w, h);
-  drawShareHeader(ctx, w, "Full Squad Stats");
+  drawShareHeader(ctx, w, "Season Leaderboards");
 
-  // Spotlight chips
-  const stripY = headerH;
-  const chipW = 300, chipGap = 30;
-  const chipStartX = w / 2 - (chipW * 3 + chipGap * 2) / 2;
-  highlights.forEach((hl, i) => {
-    const x = chipStartX + i * (chipW + chipGap);
-    ctx.fillStyle = "rgba(255,255,255,0.04)";
-    roundRectPath(ctx, x, stripY, chipW, chipBoxH, 18);
+  const marginX = 50;
+  const gap = 20;
+  const colW = (w - marginX * 2 - gap * 2) / 3;
+  const columns = [
+    { x: marginX, title: "TOP SCORERS", color: "#ef4444", data: scorers, key: "goals" },
+    { x: marginX + colW + gap, title: "TOP ASSISTS", color: "#f59e0b", data: assisters, key: "assists" },
+    { x: marginX + (colW + gap) * 2, title: "CLEAN SHEETS", color: "#3b82f6", data: keepers, key: "clean_sheets" },
+  ];
+
+  const colHeaderY = headerH;
+  columns.forEach((col) => {
+    ctx.fillStyle = `${col.color}22`;
+    roundRectPath(ctx, col.x, colHeaderY, colW, 46, 12);
     ctx.fill();
-    ctx.strokeStyle = `${hl.color}55`;
+    ctx.strokeStyle = `${col.color}66`;
     ctx.lineWidth = 2;
-    roundRectPath(ctx, x, stripY, chipW, chipBoxH, 18);
+    roundRectPath(ctx, col.x, colHeaderY, colW, 46, 12);
     ctx.stroke();
     ctx.textAlign = "center";
-    ctx.fillStyle = "#8a8a9a";
-    ctx.font = "700 17px Arial, sans-serif";
-    ctx.fillText(hl.label.toUpperCase(), x + chipW / 2, stripY + 32);
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "800 25px Arial, sans-serif";
-    ctx.fillText(hl.name, x + chipW / 2, stripY + 66);
-    ctx.fillStyle = hl.color;
-    ctx.font = "900 32px Arial, sans-serif";
-    ctx.fillText(`${hl.value} ${hl.statLabel}`, x + chipW / 2, stripY + 106);
-  });
+    ctx.fillStyle = col.color;
+    ctx.font = "800 19px Arial, sans-serif";
+    ctx.fillText(col.title, col.x + colW / 2, colHeaderY + 30);
 
-  // Full stats table
-  const tableTop = headerH + highlightH;
-  const left = 70, right = w - 70;
-  const colName = left + 10;
-  const colG = right - 250;
-  const colA = right - 160;
-  const colCS = right - 60;
+    let y = colHeaderY + colHeaderH;
+    col.data.forEach((p, i) => {
+      if (i % 2 === 1) {
+        ctx.fillStyle = "rgba(255,255,255,0.03)";
+        ctx.fillRect(col.x, y, colW, rowH);
+      }
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#666";
+      ctx.font = "700 15px Arial, sans-serif";
+      ctx.fillText(`${i + 1}`, col.x + 10, y + rowH / 2 + 5);
 
-  ctx.textAlign = "left";
-  ctx.fillStyle = "#8a8a9a";
-  ctx.font = "700 20px Arial, sans-serif";
-  ctx.fillText("PLAYER", colName, tableTop + 20);
-  ctx.textAlign = "center";
-  ctx.fillStyle = "#ef4444";
-  ctx.fillText("G", colG, tableTop + 20);
-  ctx.fillStyle = "#f59e0b";
-  ctx.fillText("A", colA, tableTop + 20);
-  ctx.fillStyle = "#3b82f6";
-  ctx.fillText("CS", colCS, tableTop + 20);
-  ctx.strokeStyle = "rgba(255,255,255,0.15)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(left, tableTop + 32);
-  ctx.lineTo(right, tableTop + 32);
-  ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "600 17px Arial, sans-serif";
+      let name = p.name;
+      const maxNameWidth = colW - 85;
+      while (ctx.measureText(name).width > maxNameWidth && name.length > 1) {
+        name = name.slice(0, -1);
+      }
+      if (name !== p.name) name = `${name.slice(0, -1)}…`;
+      ctx.fillText(name, col.x + 32, y + rowH / 2 + 5);
 
-  let y = tableTop + tableHeaderRowH;
-  players.forEach((p, i) => {
-    if (i % 2 === 1) {
-      ctx.fillStyle = "rgba(255,255,255,0.03)";
-      ctx.fillRect(left - 10, y, right - left + 20, rowH);
+      ctx.textAlign = "right";
+      ctx.fillStyle = col.color;
+      ctx.font = "800 18px Arial, sans-serif";
+      ctx.fillText(String(p[col.key]), col.x + colW - 10, y + rowH / 2 + 5);
+      y += rowH;
+    });
+
+    if (col.data.length === 0) {
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#555";
+      ctx.font = "500 15px Arial, sans-serif";
+      ctx.fillText("No data yet", col.x + colW / 2, y + rowH / 2 + 5);
     }
-    ctx.textAlign = "left";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "600 19px Arial, sans-serif";
-    ctx.fillText(`${positionEmoji[p.position] || ""} ${p.name}`, colName, y + rowH / 2 + 6);
-    ctx.textAlign = "center";
-    ctx.font = "700 19px Arial, sans-serif";
-    ctx.fillStyle = p.goals > 0 ? "#ef4444" : "#3a3a4a";
-    ctx.fillText(String(p.goals), colG, y + rowH / 2 + 6);
-    ctx.fillStyle = p.assists > 0 ? "#f59e0b" : "#3a3a4a";
-    ctx.fillText(String(p.assists), colA, y + rowH / 2 + 6);
-    ctx.fillStyle = p.position === "Defender" ? (p.clean_sheets > 0 ? "#3b82f6" : "#3a3a4a") : "#333";
-    ctx.fillText(p.position === "Defender" ? String(p.clean_sheets) : "—", colCS, y + rowH / 2 + 6);
-    y += rowH;
   });
 
   drawShareFooter(ctx, w, h);
@@ -673,16 +660,8 @@ export default function App() {
 
   // ---- Share ----
   function handleShareOverview() {
-    const sortedForShare = [...players].sort((a, b) => b.goals - a.goals || b.assists - a.assists);
-    const canvas = buildOverviewShareCard(
-      [
-        { label: "Golden Boot", name: topScorer?.name || "—", value: topScorer?.goals ?? 0, statLabel: "goals", color: "#ef4444" },
-        { label: "Playmaker", name: topAssist?.name || "—", value: topAssist?.assists ?? 0, statLabel: "assists", color: "#f59e0b" },
-        { label: "Iron Wall", name: topCS?.name || "—", value: topCS?.clean_sheets ?? 0, statLabel: "clean sheets", color: "#3b82f6" },
-      ],
-      sortedForShare
-    );
-    shareCanvasAsImage(canvas, "greedie-liga-snapshot.png");
+    const canvas = buildLeaderboardsShareCard(scorers, assisters, keepers);
+    shareCanvasAsImage(canvas, "greedie-liga-leaderboards.png");
   }
 
   function handleSharePOTW() {
