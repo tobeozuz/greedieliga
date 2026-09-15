@@ -986,7 +986,16 @@ export default function App() {
   }
 
   async function saveFplTeam() {
-    if (!fplManager || fplDraftPicks.length !== FPL_SQUAD_SIZE) return;
+    if (!fplManager) return;
+    if (fplDraftPicks.length !== FPL_SQUAD_SIZE) {
+      showToast(`Pick exactly ${FPL_SQUAD_SIZE} players before saving.`, "error");
+      return;
+    }
+    const spend = fplDraftSpend();
+    if (spend > FPL_BUDGET) {
+      showToast(`Over budget by ₦${(spend - FPL_BUDGET).toFixed(1)}m — swap out a player before saving.`, "error");
+      return;
+    }
     setFplSaving(true);
     try {
       const captain = fplDraftCaptain && fplDraftPicks.includes(fplDraftCaptain) ? fplDraftCaptain : fplDraftPicks[0];
@@ -1021,12 +1030,19 @@ export default function App() {
     }
     setSaving(true);
     try {
-      await sbFetch(`players?id=eq.${player.id}`, { method: "PATCH", body: JSON.stringify({ base_price: basePrice }) });
-      await loadPlayers();
+      const updated = await sbFetch(`players?id=eq.${player.id}`, { method: "PATCH", body: JSON.stringify({ base_price: basePrice }) });
+      // Apply the server-confirmed row straight into state so every price display (admin panel,
+      // squad builder, pitch cards) updates instantly, instead of depending on a second fetch.
+      if (updated && updated[0]) {
+        const saved = updated[0];
+        setPlayers((prev) => prev.map((p) => (p.id === player.id ? { ...p, ...saved } : p)));
+      } else {
+        await loadPlayers();
+      }
       setPriceEditId(null);
       showToast(basePrice == null ? "Reset to default starting value. ✅" : "Starting value set! ✅");
     } catch (e) {
-      showToast("Failed to update price. Did you add the base_price column?", "error");
+      showToast("Failed to update price. Did you add the base_price column in Supabase?", "error");
     } finally {
       setSaving(false);
     }
@@ -1659,12 +1675,28 @@ export default function App() {
                         })}
                       </div>
 
-                      <div style={{ display: "flex", gap: 10 }}>
-                        <button onClick={() => setFplEditing(false)} style={{ flex: 1, background: t.toggleBg, border: "none", borderRadius: 10, padding: 13, color: t.textMuted, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
-                        <button onClick={saveFplTeam} disabled={fplSaving || fplDraftPicks.length !== FPL_SQUAD_SIZE} style={{ flex: 2, background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: 13, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 15, opacity: fplSaving || fplDraftPicks.length !== FPL_SQUAD_SIZE ? 0.6 : 1 }}>
-                          {fplSaving ? "Saving..." : fplDraftPicks.length === FPL_SQUAD_SIZE ? "💾 Save Team" : `Pick ${FPL_SQUAD_SIZE - fplDraftPicks.length} more`}
-                        </button>
-                      </div>
+                      {(() => {
+                        const incomplete = fplDraftPicks.length !== FPL_SQUAD_SIZE;
+                        const overBudget = draftRemaining < 0;
+                        const blocked = fplSaving || incomplete || overBudget;
+                        let label = "💾 Save Team";
+                        if (fplSaving) label = "Saving...";
+                        else if (incomplete) label = `Pick ${FPL_SQUAD_SIZE - fplDraftPicks.length} more`;
+                        else if (overBudget) label = `Over budget by ₦${Math.abs(draftRemaining).toFixed(1)}m`;
+                        return (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {overBudget && !incomplete && (
+                              <div style={{ fontSize: 11, color: "#ef4444", textAlign: "center" }}>You're over budget — remove or swap a player to save.</div>
+                            )}
+                            <div style={{ display: "flex", gap: 10 }}>
+                              <button onClick={() => setFplEditing(false)} style={{ flex: 1, background: t.toggleBg, border: "none", borderRadius: 10, padding: 13, color: t.textMuted, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+                              <button onClick={saveFplTeam} disabled={blocked} style={{ flex: 2, background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: 13, color: "#fff", cursor: blocked ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 15, opacity: blocked ? 0.6 : 1 }}>
+                                {label}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </>
