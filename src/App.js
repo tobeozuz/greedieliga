@@ -64,6 +64,23 @@ const positionColors = { Striker: "#ef4444", Midfielder: "#f59e0b", Defender: "#
 const positionEmoji = { Striker: "⚡", Midfielder: "⚙️", Defender: "🛡️" };
 const STARMAN = "✍️Starman⭐";
 
+// ---------- FPL ----------
+// Budget per manager, in millions of naira. Edit this one number to rebalance the whole game.
+const FPL_BUDGET = 50;
+// Points awarded per stat when a manager's picked player records it (captain doubles these).
+const FPL_POINTS = { goal: 4, assist: 3, cleanSheet: 4 };
+
+// Price scales with "form" — a weighted read of the player's current season stats.
+// Same weighting as the Player of the Week engine, so the numbers feel consistent across the app.
+function fplForm(player) {
+  return player.goals * 3 + player.assists * 2 + (player.position === "Defender" ? player.clean_sheets * 2 : 0);
+}
+function fplPrice(player) {
+  const raw = 4 + fplForm(player) * 0.22;
+  const capped = Math.min(raw, 20);
+  return Math.round(capped * 2) / 2; // nearest ₦0.5m
+}
+
 // ---------- Theme ----------
 const THEMES = {
   dark: {
@@ -580,7 +597,27 @@ export default function App() {
   const [showMotmHistory, setShowMotmHistory] = useState(false);
   const [motmForm, setMotmForm] = useState({ name: "", note: "" });
 
-  useEffect(() => { loadPlayers(); loadMeta(); }, []);
+  // FPL
+  const [fplManager, setFplManager] = useState(() => {
+    try {
+      const saved = localStorage.getItem("greedie_fpl_manager");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [fplManagers, setFplManagers] = useState([]);
+  const [fplTeams, setFplTeams] = useState([]);
+  const [fplSignInName, setFplSignInName] = useState("");
+  const [fplSignInPin, setFplSignInPin] = useState("");
+  const [fplSignInError, setFplSignInError] = useState("");
+  const [fplSaving, setFplSaving] = useState(false);
+  const [fplEditing, setFplEditing] = useState(false);
+  const [fplDraftPicks, setFplDraftPicks] = useState([]);
+  const [fplDraftCaptain, setFplDraftCaptain] = useState(null);
+  const [fplSearchQ, setFplSearchQ] = useState("");
+
+  useEffect(() => { loadPlayers(); loadMeta(); loadFplData(); }, []);
 
   async function loadPlayers() {
     try {
@@ -617,6 +654,20 @@ export default function App() {
     }
   }
 
+  async function loadFplData() {
+    try {
+      const [managers, teams] = await Promise.all([
+        sbFetch("fpl_managers?select=id,name"),
+        sbFetch("fpl_teams?select=*"),
+      ]);
+      setFplManagers(managers);
+      setFplTeams(teams);
+    } catch (e) {
+      // fpl_managers / fpl_teams tables not created yet (or offline) — FPL degrades gracefully
+      console.warn("Greedie Liga: FPL tables unavailable", e);
+    }
+  }
+
   function showToast(msg, type = "success") {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2500);
@@ -633,6 +684,18 @@ export default function App() {
     setSaving(true);
     try {
       await sbFetch(`players?id=eq.${player.id}`, { method: "DELETE" });
+      // Clean up any FPL squads that had this player picked, so nothing dangles.
+      const affected = fplTeams.filter((team) => (team.player_ids || []).includes(player.id));
+      if (affected.length) {
+        await Promise.all(affected.map((team) => sbFetch(`fpl_teams?id=eq.${team.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            player_ids: (team.player_ids || []).filter((id) => id !== player.id),
+            captain_id: team.captain_id === player.id ? null : team.captain_id,
+          }),
+        })));
+        await loadFplData();
+      }
       await loadPlayers();
       setConfirmDelete(null);
       showToast(`${player.name} removed ✅`);
@@ -640,10 +703,38 @@ export default function App() {
     finally { setSaving(false); }
   }
 
+  // Applies a points delta (from one player's stat change) to every FPL squad that has them picked.
+  // Captains earn double. This is what makes FPL scoring "live" — it fires on every stat save.
+  async function applyFplPointsDelta(playerId, pointsDelta) {
+    if (!pointsDelta) return;
+    try {
+      const affected = fplTeams.filter((team) => (team.player_ids || []).includes(playerId));
+      if (!affected.length) return;
+      await Promise.all(affected.map((team) => {
+        const isCaptain = team.captain_id === playerId;
+        const teamDelta = pointsDelta * (isCaptain ? 2 : 1);
+        const newTotal = (team.total_points || 0) + teamDelta;
+        return sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "PATCH", body: JSON.stringify({ total_points: newTotal, updated_at: new Date().toISOString() }) });
+      }));
+      await loadFplData();
+    } catch (e) {
+      console.warn("Greedie Liga: FPL scoring update failed", e);
+    }
+  }
+
   async function saveEdit() {
     setSaving(true);
     try {
-      await sbFetch(`players?id=eq.${editForm.id}`, { method: "PATCH", body: JSON.stringify({ goals: +editForm.goals, assists: +editForm.assists, clean_sheets: +editForm.clean_sheets, position: editForm.position }) });
+      const before = players.find((p) => p.id === editForm.id);
+      const newGoals = +editForm.goals, newAssists = +editForm.assists, newCS = +editForm.clean_sheets;
+      await sbFetch(`players?id=eq.${editForm.id}`, { method: "PATCH", body: JSON.stringify({ goals: newGoals, assists: newAssists, clean_sheets: newCS, position: editForm.position }) });
+      if (before) {
+        const dGoals = newGoals - before.goals;
+        const dAssists = newAssists - before.assists;
+        const dCS = editForm.position === "Defender" ? newCS - before.clean_sheets : 0;
+        const pointsDelta = dGoals * FPL_POINTS.goal + dAssists * FPL_POINTS.assist + dCS * FPL_POINTS.cleanSheet;
+        await applyFplPointsDelta(editForm.id, pointsDelta);
+      }
       await loadPlayers(); setEditPlayer(null); showToast("Stats updated! ✅");
     } catch (e) { showToast("Failed to save.", "error"); }
     finally { setSaving(false); }
@@ -739,6 +830,11 @@ export default function App() {
       await setMeta("current_potw", null);
       setLastSnapshot(null);
       setPotw(null);
+      // Fresh FPL competition too — squads stay intact, points reset to zero.
+      if (fplTeams.length) {
+        await Promise.all(fplTeams.map((team) => sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "PATCH", body: JSON.stringify({ total_points: 0 }) })));
+        await loadFplData();
+      }
       await loadPlayers();
       setConfirmSeasonReset(false);
       showToast("🔄 New season started! Previous season archived.");
@@ -746,6 +842,103 @@ export default function App() {
       showToast("Failed to reset season. Did you create the app_meta table?", "error");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // ---- FPL ----
+  const fplTeam = fplManager ? fplTeams.find((team) => team.manager_id === fplManager.id) : null;
+
+  async function handleFplAuth() {
+    const name = fplSignInName.trim();
+    if (!name || !fplSignInPin.trim()) return;
+    setFplSaving(true);
+    setFplSignInError("");
+    try {
+      const existing = await sbFetch(`fpl_managers?name=eq.${encodeURIComponent(name)}&select=id,name,pin`);
+      if (existing.length) {
+        if (existing[0].pin !== fplSignInPin.trim()) {
+          setFplSignInError("Wrong PIN for that name.");
+          setFplSaving(false);
+          return;
+        }
+        const manager = { id: existing[0].id, name: existing[0].name };
+        setFplManager(manager);
+        try { localStorage.setItem("greedie_fpl_manager", JSON.stringify(manager)); } catch {}
+        showToast(`Welcome back, ${manager.name}! 👋`);
+      } else {
+        const created = await sbFetch("fpl_managers", { method: "POST", body: JSON.stringify({ name, pin: fplSignInPin.trim() }) });
+        const manager = { id: created[0].id, name: created[0].name };
+        setFplManager(manager);
+        try { localStorage.setItem("greedie_fpl_manager", JSON.stringify(manager)); } catch {}
+        await loadFplData();
+        showToast(`Team created! Welcome, ${manager.name} 🎮`);
+      }
+      setFplSignInName("");
+      setFplSignInPin("");
+    } catch (e) {
+      setFplSignInError("Couldn't sign in. Did you create the fpl_managers table?");
+    } finally {
+      setFplSaving(false);
+    }
+  }
+
+  function handleFplSignOut() {
+    setFplManager(null);
+    setFplEditing(false);
+    setFplDraftPicks([]);
+    setFplDraftCaptain(null);
+    try { localStorage.removeItem("greedie_fpl_manager"); } catch {}
+  }
+
+  function startFplBuild() {
+    if (fplTeam) {
+      setFplDraftPicks([...(fplTeam.player_ids || [])]);
+      setFplDraftCaptain(fplTeam.captain_id || null);
+    } else {
+      setFplDraftPicks([]);
+      setFplDraftCaptain(null);
+    }
+    setFplEditing(true);
+  }
+
+  function fplDraftSpend() {
+    return fplDraftPicks.reduce((sum, id) => {
+      const p = players.find((pl) => pl.id === id);
+      return sum + (p ? fplPrice(p) : 0);
+    }, 0);
+  }
+
+  function toggleFplPick(playerId) {
+    if (fplDraftPicks.includes(playerId)) {
+      setFplDraftPicks(fplDraftPicks.filter((id) => id !== playerId));
+      if (fplDraftCaptain === playerId) setFplDraftCaptain(null);
+      return;
+    }
+    if (fplDraftPicks.length >= 5) return;
+    const player = players.find((p) => p.id === playerId);
+    if (!player) return;
+    if (fplDraftSpend() + fplPrice(player) > FPL_BUDGET) return;
+    setFplDraftPicks([...fplDraftPicks, playerId]);
+  }
+
+  async function saveFplTeam() {
+    if (!fplManager || fplDraftPicks.length !== 5) return;
+    setFplSaving(true);
+    try {
+      const captain = fplDraftCaptain && fplDraftPicks.includes(fplDraftCaptain) ? fplDraftCaptain : fplDraftPicks[0];
+      if (fplTeam) {
+        await sbFetch(`fpl_teams?id=eq.${fplTeam.id}`, { method: "PATCH", body: JSON.stringify({ player_ids: fplDraftPicks, captain_id: captain, updated_at: new Date().toISOString() }) });
+        showToast("Team updated! ✅");
+      } else {
+        await sbFetch("fpl_teams", { method: "POST", body: JSON.stringify({ manager_id: fplManager.id, player_ids: fplDraftPicks, captain_id: captain, total_points: 0 }) });
+        showToast("Team saved! ⚽");
+      }
+      await loadFplData();
+      setFplEditing(false);
+    } catch (e) {
+      showToast("Failed to save team. Did you create the fpl_teams table?", "error");
+    } finally {
+      setFplSaving(false);
     }
   }
 
@@ -791,6 +984,7 @@ export default function App() {
     { id: "ratio", label: "Ratio", icon: "🧮" },
     { id: "cleansheets", label: "Clean Sheets", icon: "🧤" },
     { id: "squad", label: "Squad", icon: "👥" },
+    { id: "fpl", label: "FPL", icon: "🎮" },
   ];
 
   if (loading) return (
@@ -1197,6 +1391,160 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {activeTab === "fpl" && (() => {
+          const leaderboard = [...fplTeams]
+            .map((team) => ({ ...team, managerName: fplManagers.find((m) => m.id === team.manager_id)?.name || "Unknown" }))
+            .sort((a, b) => (b.total_points || 0) - (a.total_points || 0));
+          const maxPts = Math.max(...leaderboard.map((t2) => t2.total_points || 0), 1);
+          const draftSpend = fplDraftSpend();
+          const draftRemaining = FPL_BUDGET - draftSpend;
+          const pickablePlayers = [...players]
+            .filter((p) => p.name.toLowerCase().includes(fplSearchQ.toLowerCase()))
+            .sort((a, b) => fplPrice(b) - fplPrice(a));
+
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ background: "linear-gradient(135deg, #16a34a11, #0f0f23)", border: "1px solid #16a34a33", borderRadius: 16, padding: "12px 16px", fontSize: 12, color: t.textDim, lineHeight: 1.5 }}>
+                🎮 Build a 5-player squad within a ₦{FPL_BUDGET}m budget. Prices track form live — the hotter a player is, the pricier. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated.
+              </div>
+
+              {!fplManager ? (
+                <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: 2, color: "#22c55e" }}>SIGN IN TO PLAY</div>
+                  <div style={{ fontSize: 12, color: t.textMuted, lineHeight: 1.5 }}>Enter your name and a PIN — new names create a team automatically, existing names just sign back in.</div>
+                  <input placeholder="Your name" value={fplSignInName} onChange={(e) => { setFplSignInName(e.target.value); setFplSignInError(""); }} style={{ background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 8, padding: "12px 14px", color: t.text, fontSize: 14 }} />
+                  <input type="password" placeholder="4-digit PIN" value={fplSignInPin} onChange={(e) => { setFplSignInPin(e.target.value); setFplSignInError(""); }} onKeyDown={(e) => e.key === "Enter" && handleFplAuth()} style={{ background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 8, padding: "12px 14px", color: t.text, fontSize: 14 }} />
+                  {fplSignInError && <div style={{ color: "#ef4444", fontSize: 12 }}>{fplSignInError}</div>}
+                  <button onClick={handleFplAuth} disabled={fplSaving || !fplSignInName.trim() || !fplSignInPin.trim()} style={{ background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: 13, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14, opacity: fplSaving ? 0.6 : 1 }}>
+                    {fplSaving ? "Signing in..." : "Sign In / Create Team"}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1 }}>Manager</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: t.text }}>{fplManager.name}</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 11, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1 }}>Points</div>
+                      <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 28, color: "#22c55e" }}>{fplTeam?.total_points || 0}</div>
+                    </div>
+                    <button onClick={handleFplSignOut} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "8px 14px", color: t.textDim, cursor: "pointer", fontSize: 12 }}>Sign Out</button>
+                  </div>
+
+                  {!fplEditing ? (
+                    fplTeam ? (
+                      <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                          <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: t.textDim }}>MY SQUAD</div>
+                          <button onClick={startFplBuild} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "7px 12px", color: t.textDim, cursor: "pointer", fontSize: 12 }}>✏️ Edit Team</button>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {(fplTeam.player_ids || []).map((id) => {
+                            const p = players.find((pl) => pl.id === id);
+                            if (!p) return (
+                              <div key={id} style={{ fontSize: 12, color: t.textGhost, padding: "8px 12px" }}>Player removed</div>
+                            );
+                            const isCap = fplTeam.captain_id === id;
+                            return (
+                              <div key={id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: isCap ? "#22c55e11" : "transparent", borderRadius: 10, border: isCap ? "1px solid #22c55e44" : `1px solid ${t.rowBorder}` }}>
+                                <div>
+                                  <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{p.name}</span>
+                                  {isCap && <span style={{ color: "#22c55e", fontWeight: 800, marginLeft: 6, fontSize: 12 }}>(C)</span>}
+                                  <span style={{ fontSize: 10, color: positionColors[p.position], marginLeft: 8 }}>{positionEmoji[p.position]} {p.position}</span>
+                                </div>
+                                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, color: "#22c55e" }}>₦{fplPrice(p)}m</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div style={{ fontSize: 11, color: t.textFaint, marginTop: 12, textTransform: "uppercase", letterSpacing: 1 }}>
+                          Squad value: ₦{(fplTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? fplPrice(p) : 0); }, 0).toFixed(1)}m
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 22, textAlign: "center" }}>
+                        <div style={{ fontSize: 26, marginBottom: 8 }}>⚽</div>
+                        <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 14 }}>You haven't picked a squad yet.</div>
+                        <button onClick={startFplBuild} style={{ background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: "12px 20px", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>Build My Squad</button>
+                      </div>
+                    )
+                  ) : (
+                    <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: t.textDim }}>PICK YOUR 5</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: draftRemaining < 0 ? "#ef4444" : "#22c55e" }}>₦{draftSpend.toFixed(1)}m / ₦{FPL_BUDGET}m</div>
+                      </div>
+                      <MiniBar value={draftSpend} max={FPL_BUDGET} color={draftRemaining < 0 ? "#ef4444" : "#22c55e"} t={t} />
+
+                      {fplDraftPicks.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: 10, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Captain (2× points)</div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {fplDraftPicks.map((id) => {
+                              const p = players.find((pl) => pl.id === id);
+                              if (!p) return null;
+                              const isCap = fplDraftCaptain === id;
+                              return (
+                                <button key={id} onClick={() => setFplDraftCaptain(id)} style={{ background: isCap ? "#22c55e" : t.toggleBg, border: `1px solid ${isCap ? "#22c55e" : t.toggleBorder}`, borderRadius: 8, padding: "6px 10px", color: isCap ? "#07130a" : t.textDim, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                                  {isCap ? "★ " : ""}{p.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      <input placeholder="🔍 Search players..." value={fplSearchQ} onChange={(e) => setFplSearchQ(e.target.value)} style={{ background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 10, padding: "10px 14px", color: t.text, fontSize: 13 }} />
+
+                      <div style={{ maxHeight: 340, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 12 }}>
+                        {pickablePlayers.map((p) => {
+                          const picked = fplDraftPicks.includes(p.id);
+                          const price = fplPrice(p);
+                          const disabled = !picked && (fplDraftPicks.length >= 5 || draftSpend + price > FPL_BUDGET);
+                          return (
+                            <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: `1px solid ${t.rowBorder}`, opacity: disabled ? 0.4 : 1 }}>
+                              <div style={{ flex: 1 }}>
+                                <span style={{ fontWeight: 600, fontSize: 13, color: t.text }}>{p.name}</span>
+                                <span style={{ fontSize: 10, color: positionColors[p.position], marginLeft: 8 }}>{positionEmoji[p.position]} {p.position}</span>
+                              </div>
+                              <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 15, color: "#22c55e", marginRight: 10 }}>₦{price}m</div>
+                              <button onClick={() => toggleFplPick(p.id)} disabled={disabled} style={{ background: picked ? "#ef444422" : "#22c55e22", border: `1px solid ${picked ? "#ef4444" : "#22c55e"}`, borderRadius: 8, color: picked ? "#ef4444" : "#22c55e", cursor: disabled ? "not-allowed" : "pointer", padding: "5px 10px", fontSize: 12, fontWeight: 700 }}>
+                                {picked ? "✕" : "+"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <button onClick={() => setFplEditing(false)} style={{ flex: 1, background: t.toggleBg, border: "none", borderRadius: 10, padding: 13, color: t.textMuted, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+                        <button onClick={saveFplTeam} disabled={fplSaving || fplDraftPicks.length !== 5} style={{ flex: 2, background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: 13, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 15, opacity: fplSaving || fplDraftPicks.length !== 5 ? 0.6 : 1 }}>
+                          {fplSaving ? "Saving..." : fplDraftPicks.length === 5 ? "💾 Save Team" : `Pick ${5 - fplDraftPicks.length} more`}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div style={{ background: t.cardBg, borderRadius: 16, padding: 20, border: `1px solid ${t.border}` }}>
+                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: 3, marginBottom: 16, color: "#22c55e" }}>🏆 FPL LEADERBOARD</div>
+                {leaderboard.length === 0 ? (
+                  <div style={{ fontSize: 12, color: t.textMuted }}>No managers yet — be the first to build a squad.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {leaderboard.map((team, i) => (
+                      <LeaderRow key={team.id} rank={i + 1} name={team.managerName} value={team.total_points || 0} max={maxPts} color="#22c55e" label="pts" t={t} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {confirmDelete && (
