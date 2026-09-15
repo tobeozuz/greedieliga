@@ -90,10 +90,17 @@ function fplForm(player, lastSeasonStats) {
 // basePrice is the admin-set starting valuation for a player (defaults to ₦4m when unset).
 // Price is never frozen at that number — it keeps moving from there as form builds up,
 // same as real FPL: admins set the starting value, performance moves it week to week.
+// The form drift is deliberately capped (±6m) rather than added raw: over a real season,
+// cumulative goals/assists/clean sheets get large enough that an uncapped drift would blow
+// past the ₦20m ceiling for almost every player, flattening everyone to the same price and
+// making the admin's starting values invisible. Capping the drift keeps the base price the
+// dominant, differentiating factor no matter how big stats get, while still letting form
+// nudge things up or down.
 function fplPrice(player, lastSeasonStats, basePrice) {
   const floor = basePrice != null ? basePrice : 4;
-  const raw = floor + fplForm(player, lastSeasonStats) * 0.22;
-  const capped = Math.min(raw, 20);
+  const drift = Math.max(-6, Math.min(6, fplForm(player, lastSeasonStats) * 0.05));
+  const raw = floor + drift;
+  const capped = Math.max(0, Math.min(raw, 20));
   return Math.round(capped * 2) / 2; // nearest ₦0.5m
 }
 
