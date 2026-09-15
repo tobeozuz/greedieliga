@@ -67,16 +67,28 @@ const STARMAN = "✍️Starman⭐";
 // ---------- FPL ----------
 // Budget per manager, in millions of naira. Edit this one number to rebalance the whole game.
 const FPL_BUDGET = 50;
+// Outfield players each manager picks (Defender/Midfielder/Striker) — the goalie below doesn't count toward this.
+const FPL_SQUAD_SIZE = 4;
 // Points awarded per stat when a manager's picked player records it (captain doubles these).
 const FPL_POINTS = { goal: 4, assist: 3, cleanSheet: 4 };
+// Every squad gets the same fixed goalkeeper — free, undroppable, no stats tracked for the position,
+// shown purely so the pitch reads like a real lineup with a keeper at the back.
+const FPL_GOALKEEPER = { name: "Goalkeeper", position: "Goalkeeper" };
+const GOALKEEPER_STYLE = { color: "#94a3b8", emoji: "🧤" };
 
-// Price scales with "form" — a weighted read of the player's current season stats.
-// Same weighting as the Player of the Week engine, so the numbers feel consistent across the app.
-function fplForm(player) {
-  return player.goals * 3 + player.assists * 2 + (player.position === "Defender" ? player.clean_sheets * 2 : 0);
+// Price scales with "form" — a weighted read of stats, same weighting as the Player of the Week engine.
+// A player's price blends their LAST season's record (reputation, so prices are differentiated even
+// on matchday one of a fresh season) with the CURRENT season as it builds up — exactly how real FPL
+// prices work: set by reputation, then drift with this season's form.
+function fplStatForm(stats) {
+  if (!stats) return 0;
+  return stats.goals * 3 + stats.assists * 2 + (stats.position === "Defender" ? stats.clean_sheets * 2 : 0);
 }
-function fplPrice(player) {
-  const raw = 4 + fplForm(player) * 0.22;
+function fplForm(player, lastSeasonStats) {
+  return fplStatForm(player) + fplStatForm(lastSeasonStats);
+}
+function fplPrice(player, lastSeasonStats) {
+  const raw = 4 + fplForm(player, lastSeasonStats) * 0.22;
   const capped = Math.min(raw, 20);
   return Math.round(capped * 2) / 2; // nearest ₦0.5m
 }
@@ -540,10 +552,14 @@ function LeaderRow({ rank, name, value, max, color, label, t }) {
 // A shirt-style player card for the FPL pitch view — badge for price, optional captain star,
 // optional "✕" to remove (edit mode), tap the shirt to make them captain (edit mode).
 function PitchPlayerCard({ player, price, isCaptain, onRemove, onMakeCaptain }) {
-  const color = positionColors[player.position];
+  const isGoalkeeper = player.position === "Goalkeeper";
+  const color = isGoalkeeper ? GOALKEEPER_STYLE.color : positionColors[player.position];
+  const emoji = isGoalkeeper ? GOALKEEPER_STYLE.emoji : positionEmoji[player.position];
   return (
     <div style={{ position: "relative", width: 88, display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <div style={{ position: "absolute", top: -8, left: -4, background: "#0d0d2b", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "2px 6px", fontSize: 10, fontWeight: 800, color: "#fff", zIndex: 2, whiteSpace: "nowrap" }}>₦{price}m</div>
+      <div style={{ position: "absolute", top: -8, left: -4, background: "#0d0d2b", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "2px 6px", fontSize: 10, fontWeight: 800, color: "#fff", zIndex: 2, whiteSpace: "nowrap" }}>
+        {price == null ? "FIXED" : `₦${price}m`}
+      </div>
       {onRemove && (
         <button onClick={onRemove} style={{ position: "absolute", top: -8, right: -4, width: 20, height: 20, borderRadius: "50%", background: "#1a1a3e", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", fontSize: 11, cursor: "pointer", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 1 }}>✕</button>
       )}
@@ -558,7 +574,7 @@ function PitchPlayerCard({ player, price, isCaptain, onRemove, onMakeCaptain }) 
           cursor: onMakeCaptain ? "pointer" : "default",
         }}
       >
-        {isCaptain ? "★" : positionEmoji[player.position]}
+        {isCaptain ? "★" : emoji}
       </div>
       <div style={{ background: "#ffffff", color: "#111", borderRadius: 6, padding: "3px 6px", fontSize: 10, fontWeight: 700, marginTop: 6, maxWidth: 84, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {player.name}{isCaptain ? " (C)" : ""}
@@ -946,7 +962,7 @@ export default function App() {
   function fplDraftSpend() {
     return fplDraftPicks.reduce((sum, id) => {
       const p = players.find((pl) => pl.id === id);
-      return sum + (p ? fplPrice(p) : 0);
+      return sum + (p ? priceOf(p) : 0);
     }, 0);
   }
 
@@ -956,15 +972,15 @@ export default function App() {
       if (fplDraftCaptain === playerId) setFplDraftCaptain(null);
       return;
     }
-    if (fplDraftPicks.length >= 5) return;
+    if (fplDraftPicks.length >= FPL_SQUAD_SIZE) return;
     const player = players.find((p) => p.id === playerId);
     if (!player) return;
-    if (fplDraftSpend() + fplPrice(player) > FPL_BUDGET) return;
+    if (fplDraftSpend() + priceOf(player) > FPL_BUDGET) return;
     setFplDraftPicks([...fplDraftPicks, playerId]);
   }
 
   async function saveFplTeam() {
-    if (!fplManager || fplDraftPicks.length !== 5) return;
+    if (!fplManager || fplDraftPicks.length !== FPL_SQUAD_SIZE) return;
     setFplSaving(true);
     try {
       const captain = fplDraftCaptain && fplDraftPicks.includes(fplDraftCaptain) ? fplDraftCaptain : fplDraftPicks[0];
@@ -1001,6 +1017,11 @@ export default function App() {
     const canvas = buildPOTWShareCard(potw);
     shareCanvasAsImage(canvas, `greedie-liga-potw-${potw.name.toLowerCase().replace(/\s+/g, "-")}.png`);
   }
+
+  // Last season's archived stats, keyed by name, feed into FPL pricing (see priceOf below).
+  const lastSeasonMap = {};
+  if (seasonArchive[0]) seasonArchive[0].players.forEach((p) => { lastSeasonMap[p.name] = p; });
+  function priceOf(player) { return fplPrice(player, lastSeasonMap[player.name]); }
 
   const totalGoals = players.reduce((a, p) => a + p.goals, 0);
   const totalAssists = players.reduce((a, p) => a + p.assists, 0);
@@ -1443,12 +1464,12 @@ export default function App() {
           const draftRemaining = FPL_BUDGET - draftSpend;
           const pickablePlayers = [...players]
             .filter((p) => p.name.toLowerCase().includes(fplSearchQ.toLowerCase()))
-            .sort((a, b) => fplPrice(b) - fplPrice(a));
+            .sort((a, b) => priceOf(b) - priceOf(a));
 
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ background: "linear-gradient(135deg, #16a34a11, #0f0f23)", border: "1px solid #16a34a33", borderRadius: 16, padding: "12px 16px", fontSize: 12, color: t.textDim, lineHeight: 1.5 }}>
-                🎮 Build a 5-player squad within a ₦{FPL_BUDGET}m budget. Prices track form live — the hotter a player is, the pricier. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated.
+                🎮 Build a {FPL_SQUAD_SIZE}-player squad within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Prices are set by last season's form and then drift with this season's — the hotter a player is, the pricier. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated.
               </div>
 
               {!fplManager ? (
@@ -1484,13 +1505,16 @@ export default function App() {
                           <button onClick={startFplBuild} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "7px 12px", color: t.textDim, cursor: "pointer", fontSize: 12 }}>✏️ Edit Team</button>
                         </div>
                         <Pitch>
+                          <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                            <PitchPlayerCard player={FPL_GOALKEEPER} price={null} isCaptain={false} />
+                          </div>
                           {["Defender", "Midfielder", "Striker"].map((pos) => {
                             const rowPlayers = (fplTeam.player_ids || []).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
                             if (!rowPlayers.length) return null;
                             return (
                               <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
                                 {rowPlayers.map((p) => (
-                                  <PitchPlayerCard key={p.id} player={p} price={fplPrice(p)} isCaptain={fplTeam.captain_id === p.id} />
+                                  <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={fplTeam.captain_id === p.id} />
                                 ))}
                               </div>
                             );
@@ -1500,7 +1524,7 @@ export default function App() {
                           <div style={{ fontSize: 11, color: t.textGhost, marginTop: 10 }}>Some picked players were removed from the liga.</div>
                         )}
                         <div style={{ fontSize: 11, color: t.textFaint, marginTop: 12, textTransform: "uppercase", letterSpacing: 1 }}>
-                          Squad value: ₦{(fplTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? fplPrice(p) : 0); }, 0).toFixed(1)}m
+                          Squad value: ₦{(fplTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0).toFixed(1)}m
                         </div>
                       </div>
                     ) : (
@@ -1514,7 +1538,7 @@ export default function App() {
                     <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
                       <div style={{ display: "flex", alignItems: "stretch", justifyContent: "center", gap: 16 }}>
                         <div style={{ textAlign: "center" }}>
-                          <div style={{ background: "#16a34a22", border: "1px solid #16a34a55", borderRadius: 10, padding: "8px 18px", fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: "#22c55e" }}>{fplDraftPicks.length} / 5</div>
+                          <div style={{ background: "#16a34a22", border: "1px solid #16a34a55", borderRadius: 10, padding: "8px 18px", fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: "#22c55e" }}>{fplDraftPicks.length} / {FPL_SQUAD_SIZE}</div>
                           <div style={{ fontSize: 10, color: t.textMuted, marginTop: 4, textTransform: "uppercase", letterSpacing: 1 }}>Players selected</div>
                         </div>
                         <div style={{ width: 1, background: t.border }} />
@@ -1524,34 +1548,33 @@ export default function App() {
                         </div>
                       </div>
 
-                      {fplDraftPicks.length > 0 ? (
-                        <>
-                          <Pitch>
-                            {["Defender", "Midfielder", "Striker"].map((pos) => {
-                              const rowPlayers = fplDraftPicks.map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
-                              if (!rowPlayers.length) return null;
-                              return (
-                                <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
-                                  {rowPlayers.map((p) => (
-                                    <PitchPlayerCard key={p.id} player={p} price={fplPrice(p)} isCaptain={fplDraftCaptain === p.id} onRemove={() => toggleFplPick(p.id)} onMakeCaptain={() => setFplDraftCaptain(p.id)} />
-                                  ))}
-                                </div>
-                              );
-                            })}
-                          </Pitch>
-                          <div style={{ fontSize: 10, color: t.textFaint, textAlign: "center" }}>Tap a shirt to make them captain (2× points) · ✕ to remove</div>
-                        </>
-                      ) : (
-                        <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "18px 0" }}>Tap players below to add them to your pitch.</div>
-                      )}
+                      <Pitch>
+                        <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                          <PitchPlayerCard player={FPL_GOALKEEPER} price={null} isCaptain={false} />
+                        </div>
+                        {["Defender", "Midfielder", "Striker"].map((pos) => {
+                          const rowPlayers = fplDraftPicks.map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
+                          if (!rowPlayers.length) return null;
+                          return (
+                            <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                              {rowPlayers.map((p) => (
+                                <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={fplDraftCaptain === p.id} onRemove={() => toggleFplPick(p.id)} onMakeCaptain={() => setFplDraftCaptain(p.id)} />
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </Pitch>
+                      <div style={{ fontSize: 10, color: t.textFaint, textAlign: "center" }}>
+                        {fplDraftPicks.length > 0 ? "Tap a shirt to make them captain (2× points) · ✕ to remove" : "Tap players below to add them to your pitch."}
+                      </div>
 
                       <input placeholder="🔍 Search players..." value={fplSearchQ} onChange={(e) => setFplSearchQ(e.target.value)} style={{ background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 10, padding: "10px 14px", color: t.text, fontSize: 13 }} />
 
                       <div style={{ maxHeight: 340, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 12 }}>
                         {pickablePlayers.map((p) => {
                           const picked = fplDraftPicks.includes(p.id);
-                          const price = fplPrice(p);
-                          const disabled = !picked && (fplDraftPicks.length >= 5 || draftSpend + price > FPL_BUDGET);
+                          const price = priceOf(p);
+                          const disabled = !picked && (fplDraftPicks.length >= FPL_SQUAD_SIZE || draftSpend + price > FPL_BUDGET);
                           return (
                             <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: `1px solid ${t.rowBorder}`, opacity: disabled ? 0.4 : 1 }}>
                               <div style={{ flex: 1 }}>
@@ -1569,8 +1592,8 @@ export default function App() {
 
                       <div style={{ display: "flex", gap: 10 }}>
                         <button onClick={() => setFplEditing(false)} style={{ flex: 1, background: t.toggleBg, border: "none", borderRadius: 10, padding: 13, color: t.textMuted, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
-                        <button onClick={saveFplTeam} disabled={fplSaving || fplDraftPicks.length !== 5} style={{ flex: 2, background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: 13, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 15, opacity: fplSaving || fplDraftPicks.length !== 5 ? 0.6 : 1 }}>
-                          {fplSaving ? "Saving..." : fplDraftPicks.length === 5 ? "💾 Save Team" : `Pick ${5 - fplDraftPicks.length} more`}
+                        <button onClick={saveFplTeam} disabled={fplSaving || fplDraftPicks.length !== FPL_SQUAD_SIZE} style={{ flex: 2, background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: 13, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 15, opacity: fplSaving || fplDraftPicks.length !== FPL_SQUAD_SIZE ? 0.6 : 1 }}>
+                          {fplSaving ? "Saving..." : fplDraftPicks.length === FPL_SQUAD_SIZE ? "💾 Save Team" : `Pick ${FPL_SQUAD_SIZE - fplDraftPicks.length} more`}
                         </button>
                       </div>
                     </div>
