@@ -76,32 +76,30 @@ const FPL_POINTS = { goal: 4, assist: 3, cleanSheet: 4 };
 const FPL_GOALKEEPER = { name: "Goalkeeper", position: "Goalkeeper" };
 const GOALKEEPER_STYLE = { color: "#94a3b8", emoji: "🧤" };
 
-// Price scales with "form" — a weighted read of stats, same weighting as the Player of the Week engine.
-// A player's price blends their LAST season's record (reputation, so prices are differentiated even
-// on matchday one of a fresh season) with the CURRENT season as it builds up — exactly how real FPL
-// prices work: set by reputation, then drift with this season's form.
+// ---------- FPL pricing ----------
+// A player's price is a STORED number (players.base_price) — not something recalculated live
+// from cumulative stats on every render. It only ever changes two ways:
+//   1. An admin sets it directly (Admin · Player Values panel) — takes effect immediately.
+//   2. "Start New Week" applies one small, capped bump per player based on THAT WEEK's stat
+//      changes only (never the season total), same moment Player of the Week gets computed.
+// This mirrors real FPL: prices move once per gameweek, not continuously as stats are edited.
 function fplStatForm(stats) {
   if (!stats) return 0;
   return stats.goals * 3 + stats.assists * 2 + (stats.position === "Defender" ? stats.clean_sheets * 2 : 0);
 }
-function fplForm(player, lastSeasonStats) {
-  return fplStatForm(player) + fplStatForm(lastSeasonStats);
+// Used once, at a season reset, to seed next season's starting prices from the season that
+// just ended — so players don't all flatten back to a bare ₦4m the moment stats reset to zero.
+function seasonReputationPrice(stats) {
+  const drift = Math.max(-6, Math.min(6, fplStatForm(stats) * 0.05));
+  return Math.round(Math.max(0, Math.min(4 + drift, 20)) * 2) / 2;
 }
-// basePrice is the admin-set starting valuation for a player (defaults to ₦4m when unset).
-// Price is never frozen at that number — it keeps moving from there as form builds up,
-// same as real FPL: admins set the starting value, performance moves it week to week.
-// The form drift is deliberately capped (±6m) rather than added raw: over a real season,
-// cumulative goals/assists/clean sheets get large enough that an uncapped drift would blow
-// past the ₦20m ceiling for almost every player, flattening everyone to the same price and
-// making the admin's starting values invisible. Capping the drift keeps the base price the
-// dominant, differentiating factor no matter how big stats get, while still letting form
-// nudge things up or down.
-function fplPrice(player, lastSeasonStats, basePrice) {
-  const floor = basePrice != null ? basePrice : 4;
-  const drift = Math.max(-6, Math.min(6, fplForm(player, lastSeasonStats) * 0.05));
-  const raw = floor + drift;
-  const capped = Math.max(0, Math.min(raw, 20));
-  return Math.round(capped * 2) / 2; // nearest ₦0.5m
+// Used by "Start New Week" — a small, capped nudge (±₦2m) from THIS week's stat delta only.
+function weeklyPriceBump(dGoals, dAssists, dCS, position) {
+  const formPts = dGoals * 3 + dAssists * 2 + (position === "Defender" ? dCS * 2 : 0);
+  return Math.max(-2, Math.min(2, formPts * 0.15));
+}
+function priceOf(player) {
+  return player.base_price != null ? player.base_price : 4;
 }
 
 // ---------- Theme ----------
@@ -832,6 +830,7 @@ export default function App() {
         const prevMap = {};
         lastSnapshot.players.forEach((p) => { prevMap[p.id] = p; });
         let best = null;
+        const priceUpdates = [];
         players.forEach((p) => {
           const prev = prevMap[p.id];
           const dGoals = prev ? Math.max(0, p.goals - prev.goals) : p.goals;
@@ -841,6 +840,13 @@ export default function App() {
           if (score > 0 && (!best || score > best.score)) {
             best = { name: p.name, position: p.position, goals: dGoals, assists: dAssists, clean_sheets: dCS, score, computed_at: new Date().toISOString() };
           }
+          // Price moves once here, by a small capped amount based on THIS week's contribution only.
+          const bump = weeklyPriceBump(dGoals, dAssists, dCS, p.position);
+          if (bump !== 0) {
+            const current = priceOf(p);
+            const next = Math.round(Math.max(0, Math.min(current + bump, 20)) * 2) / 2;
+            if (next !== current) priceUpdates.push({ id: p.id, base_price: next });
+          }
         });
         if (best) {
           await setMeta("current_potw", best);
@@ -849,12 +855,16 @@ export default function App() {
         } else {
           showToast("No stat changes since last week — POTW unchanged.", "error");
         }
+        if (priceUpdates.length) {
+          await Promise.all(priceUpdates.map((u) => sbFetch(`players?id=eq.${u.id}`, { method: "PATCH", body: JSON.stringify({ base_price: u.base_price }) })));
+        }
       } else {
-        showToast("Baseline saved. POTW will show after your next update. ✅");
+        showToast("Baseline saved. POTW and price changes will show from your next update. ✅");
       }
       const snap = { saved_at: new Date().toISOString(), players: snapshotPlayers };
       await setMeta("last_week_snapshot", snap);
       setLastSnapshot(snap);
+      await loadPlayers();
     } catch (e) {
       showToast("Failed to update week. Did you create the app_meta table?", "error");
     } finally {
@@ -896,7 +906,10 @@ export default function App() {
       const updated = [archive, ...existing].slice(0, 20);
       await setMeta("season_archive", updated);
       setSeasonArchive(updated);
-      await Promise.all(players.map((p) => sbFetch(`players?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ goals: 0, assists: 0, clean_sheets: 0 }) })));
+      // Seed next season's starting prices from the season that just ended, so players don't
+      // all flatten back to a bare ₦4m the moment their stats reset to zero — a returning
+      // star keeps a meaningful price from day one, same as real FPL does off reputation.
+      await Promise.all(players.map((p) => sbFetch(`players?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ goals: 0, assists: 0, clean_sheets: 0, base_price: seasonReputationPrice(p) }) })));
       await setMeta("last_week_snapshot", null);
       await setMeta("current_potw", null);
       setLastSnapshot(null);
@@ -1022,7 +1035,7 @@ export default function App() {
     }
   }
 
-  // ---- Admin: set each player's starting value — price then moves with form from there ----
+  // ---- Admin: set each player's current price directly — see the pricing model note above priceOf() ----
   function startPriceEdit(player) {
     setPriceEditId(player.id);
     setPriceEditValue(player.base_price != null ? String(player.base_price) : "");
@@ -1047,7 +1060,7 @@ export default function App() {
         await loadPlayers();
       }
       setPriceEditId(null);
-      showToast(basePrice == null ? "Reset to default starting value. ✅" : "Starting value set! ✅");
+      showToast(basePrice == null ? "Reset to default price. ✅" : "Price updated! ✅");
     } catch (e) {
       showToast("Failed to update price. Did you add the base_price column in Supabase?", "error");
     } finally {
@@ -1071,15 +1084,6 @@ export default function App() {
     if (!potw) return;
     const canvas = buildPOTWShareCard(potw);
     shareCanvasAsImage(canvas, `greedie-liga-potw-${potw.name.toLowerCase().replace(/\s+/g, "-")}.png`);
-  }
-
-  // Last season's archived stats, keyed by name, feed into FPL pricing (see priceOf below).
-  const lastSeasonMap = {};
-  if (seasonArchive[0]) seasonArchive[0].players.forEach((p) => { lastSeasonMap[p.name] = p; });
-  // Admin sets each player's starting value (base_price); the price then keeps moving
-  // with form on top of that, it never gets stuck at the number the admin typed in.
-  function priceOf(player) {
-    return fplPrice(player, lastSeasonMap[player.name], player.base_price);
   }
 
   const totalGoals = players.reduce((a, p) => a + p.goals, 0);
@@ -1528,13 +1532,13 @@ export default function App() {
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ background: "linear-gradient(135deg, #16a34a11, #0f0f23)", border: "1px solid #16a34a33", borderRadius: 16, padding: "12px 16px", fontSize: 12, color: t.textDim, lineHeight: 1.5 }}>
-                🎮 Build a {FPL_SQUAD_SIZE}-player squad within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Prices are set by last season's form and then drift with this season's — the hotter a player is, the pricier. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated.
+                🎮 Build a {FPL_SQUAD_SIZE}-player squad within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Prices are set by the admin and only move once a week, when a new week is started, based on that week's performance. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated.
               </div>
 
               {isAdmin && (
                 <div style={{ background: t.cardBg, border: "1px solid #f59e0b55", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
                   <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: "#f59e0b" }}>⚙️ ADMIN · PLAYER VALUES</div>
-                  <div style={{ fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>Set each player's starting value — price then keeps moving up or down with their form on top of it, just like real FPL. It's never frozen. Clear the field and save to go back to the default ₦4m starting value.</div>
+                  <div style={{ fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>This is each player's current price, right now — set it to whatever's fair. It stays exactly what you set until you either change it again or hit "Start New Week", which bumps every player a small, capped amount based on that week's performance only. Clear the field and save to go back to the default ₦4m.</div>
                   <div style={{ maxHeight: 340, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 12 }}>
                     {[...players].sort((a, b) => priceOf(b) - priceOf(a)).map((p) => {
                       const hasCustomBase = p.base_price != null;
@@ -1543,7 +1547,7 @@ export default function App() {
                         <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: `1px solid ${t.rowBorder}`, gap: 8 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontWeight: 600, fontSize: 13, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                            <div style={{ fontSize: 10, color: t.textFaint }}>{positionEmoji[p.position]} {p.position}{hasCustomBase ? ` · starting value ₦${p.base_price}m` : ""}</div>
+                            <div style={{ fontSize: 10, color: t.textFaint }}>{positionEmoji[p.position]} {p.position}{hasCustomBase ? ` · set by admin` : ""}</div>
                           </div>
                           {editing ? (
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
