@@ -537,6 +537,48 @@ function LeaderRow({ rank, name, value, max, color, label, t }) {
   );
 }
 
+// A shirt-style player card for the FPL pitch view — badge for price, optional captain star,
+// optional "✕" to remove (edit mode), tap the shirt to make them captain (edit mode).
+function PitchPlayerCard({ player, price, isCaptain, onRemove, onMakeCaptain }) {
+  const color = positionColors[player.position];
+  return (
+    <div style={{ position: "relative", width: 88, display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <div style={{ position: "absolute", top: -8, left: -4, background: "#0d0d2b", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "2px 6px", fontSize: 10, fontWeight: 800, color: "#fff", zIndex: 2, whiteSpace: "nowrap" }}>₦{price}m</div>
+      {onRemove && (
+        <button onClick={onRemove} style={{ position: "absolute", top: -8, right: -4, width: 20, height: 20, borderRadius: "50%", background: "#1a1a3e", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", fontSize: 11, cursor: "pointer", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 1 }}>✕</button>
+      )}
+      <div
+        onClick={onMakeCaptain}
+        style={{
+          width: 62, height: 62, borderRadius: "14px 14px 6px 6px",
+          background: `linear-gradient(160deg, ${color}, ${color}aa)`,
+          border: isCaptain ? "2px solid #facc15" : "2px solid rgba(255,255,255,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 22, marginTop: 10, boxShadow: "0 4px 10px rgba(0,0,0,0.35)",
+          cursor: onMakeCaptain ? "pointer" : "default",
+        }}
+      >
+        {isCaptain ? "★" : positionEmoji[player.position]}
+      </div>
+      <div style={{ background: "#ffffff", color: "#111", borderRadius: 6, padding: "3px 6px", fontSize: 10, fontWeight: 700, marginTop: 6, maxWidth: 84, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {player.name}{isCaptain ? " (C)" : ""}
+      </div>
+    </div>
+  );
+}
+
+// Green pitch backdrop the shirt cards sit on, with faint pitch markings.
+function Pitch({ children }) {
+  return (
+    <div style={{ position: "relative", background: "linear-gradient(180deg, #1a8f3c 0%, #14742f 100%)", borderRadius: 16, padding: "26px 10px 22px", overflow: "hidden", border: "2px solid #0d5c22" }}>
+      <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(180deg, rgba(255,255,255,0.05) 0, rgba(255,255,255,0.05) 34px, transparent 34px, transparent 68px)" }} />
+      <div style={{ position: "absolute", left: "50%", top: "50%", width: 100, height: 100, marginLeft: -50, marginTop: -50, border: "2px solid rgba(255,255,255,0.3)", borderRadius: "50%" }} />
+      <div style={{ position: "absolute", left: 0, right: 0, top: "50%", height: 2, background: "rgba(255,255,255,0.3)" }} />
+      <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", gap: 24 }}>{children}</div>
+    </div>
+  );
+}
+
 function InsightCard({ emoji, color, text, index, t }) {
   return (
     <div style={{ background: `linear-gradient(135deg, ${color}0d, ${t.cardBg})`, border: `1px solid ${color}2a`, borderRadius: 16, padding: "18px 20px", display: "flex", flexDirection: "column", gap: 10, animation: `fadeIn 0.4s ease ${index * 0.07}s both` }}>
@@ -1437,29 +1479,26 @@ export default function App() {
                   {!fplEditing ? (
                     fplTeam ? (
                       <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                           <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: t.textDim }}>MY SQUAD</div>
                           <button onClick={startFplBuild} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "7px 12px", color: t.textDim, cursor: "pointer", fontSize: 12 }}>✏️ Edit Team</button>
                         </div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          {(fplTeam.player_ids || []).map((id) => {
-                            const p = players.find((pl) => pl.id === id);
-                            if (!p) return (
-                              <div key={id} style={{ fontSize: 12, color: t.textGhost, padding: "8px 12px" }}>Player removed</div>
-                            );
-                            const isCap = fplTeam.captain_id === id;
+                        <Pitch>
+                          {["Defender", "Midfielder", "Striker"].map((pos) => {
+                            const rowPlayers = (fplTeam.player_ids || []).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
+                            if (!rowPlayers.length) return null;
                             return (
-                              <div key={id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: isCap ? "#22c55e11" : "transparent", borderRadius: 10, border: isCap ? "1px solid #22c55e44" : `1px solid ${t.rowBorder}` }}>
-                                <div>
-                                  <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{p.name}</span>
-                                  {isCap && <span style={{ color: "#22c55e", fontWeight: 800, marginLeft: 6, fontSize: 12 }}>(C)</span>}
-                                  <span style={{ fontSize: 10, color: positionColors[p.position], marginLeft: 8 }}>{positionEmoji[p.position]} {p.position}</span>
-                                </div>
-                                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, color: "#22c55e" }}>₦{fplPrice(p)}m</div>
+                              <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                                {rowPlayers.map((p) => (
+                                  <PitchPlayerCard key={p.id} player={p} price={fplPrice(p)} isCaptain={fplTeam.captain_id === p.id} />
+                                ))}
                               </div>
                             );
                           })}
-                        </div>
+                        </Pitch>
+                        {(fplTeam.player_ids || []).some((id) => !players.find((pl) => pl.id === id)) && (
+                          <div style={{ fontSize: 11, color: t.textGhost, marginTop: 10 }}>Some picked players were removed from the liga.</div>
+                        )}
                         <div style={{ fontSize: 11, color: t.textFaint, marginTop: 12, textTransform: "uppercase", letterSpacing: 1 }}>
                           Squad value: ₦{(fplTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? fplPrice(p) : 0); }, 0).toFixed(1)}m
                         </div>
@@ -1472,29 +1511,38 @@ export default function App() {
                       </div>
                     )
                   ) : (
-                    <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: t.textDim }}>PICK YOUR 5</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: draftRemaining < 0 ? "#ef4444" : "#22c55e" }}>₦{draftSpend.toFixed(1)}m / ₦{FPL_BUDGET}m</div>
+                    <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+                      <div style={{ display: "flex", alignItems: "stretch", justifyContent: "center", gap: 16 }}>
+                        <div style={{ textAlign: "center" }}>
+                          <div style={{ background: "#16a34a22", border: "1px solid #16a34a55", borderRadius: 10, padding: "8px 18px", fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: "#22c55e" }}>{fplDraftPicks.length} / 5</div>
+                          <div style={{ fontSize: 10, color: t.textMuted, marginTop: 4, textTransform: "uppercase", letterSpacing: 1 }}>Players selected</div>
+                        </div>
+                        <div style={{ width: 1, background: t.border }} />
+                        <div style={{ textAlign: "center" }}>
+                          <div style={{ background: draftRemaining < 0 ? "#ef444422" : "#16a34a22", border: `1px solid ${draftRemaining < 0 ? "#ef4444" : "#16a34a"}55`, borderRadius: 10, padding: "8px 18px", fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: draftRemaining < 0 ? "#ef4444" : "#22c55e" }}>₦{draftRemaining.toFixed(1)}m</div>
+                          <div style={{ fontSize: 10, color: t.textMuted, marginTop: 4, textTransform: "uppercase", letterSpacing: 1 }}>Bank</div>
+                        </div>
                       </div>
-                      <MiniBar value={draftSpend} max={FPL_BUDGET} color={draftRemaining < 0 ? "#ef4444" : "#22c55e"} t={t} />
 
-                      {fplDraftPicks.length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 10, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Captain (2× points)</div>
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            {fplDraftPicks.map((id) => {
-                              const p = players.find((pl) => pl.id === id);
-                              if (!p) return null;
-                              const isCap = fplDraftCaptain === id;
+                      {fplDraftPicks.length > 0 ? (
+                        <>
+                          <Pitch>
+                            {["Defender", "Midfielder", "Striker"].map((pos) => {
+                              const rowPlayers = fplDraftPicks.map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
+                              if (!rowPlayers.length) return null;
                               return (
-                                <button key={id} onClick={() => setFplDraftCaptain(id)} style={{ background: isCap ? "#22c55e" : t.toggleBg, border: `1px solid ${isCap ? "#22c55e" : t.toggleBorder}`, borderRadius: 8, padding: "6px 10px", color: isCap ? "#07130a" : t.textDim, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-                                  {isCap ? "★ " : ""}{p.name}
-                                </button>
+                                <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                                  {rowPlayers.map((p) => (
+                                    <PitchPlayerCard key={p.id} player={p} price={fplPrice(p)} isCaptain={fplDraftCaptain === p.id} onRemove={() => toggleFplPick(p.id)} onMakeCaptain={() => setFplDraftCaptain(p.id)} />
+                                  ))}
+                                </div>
                               );
                             })}
-                          </div>
-                        </div>
+                          </Pitch>
+                          <div style={{ fontSize: 10, color: t.textFaint, textAlign: "center" }}>Tap a shirt to make them captain (2× points) · ✕ to remove</div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "18px 0" }}>Tap players below to add them to your pitch.</div>
                       )}
 
                       <input placeholder="🔍 Search players..." value={fplSearchQ} onChange={(e) => setFplSearchQ(e.target.value)} style={{ background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 10, padding: "10px 14px", color: t.text, fontSize: 13 }} />
