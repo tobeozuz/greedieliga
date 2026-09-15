@@ -87,8 +87,12 @@ function fplStatForm(stats) {
 function fplForm(player, lastSeasonStats) {
   return fplStatForm(player) + fplStatForm(lastSeasonStats);
 }
-function fplPrice(player, lastSeasonStats) {
-  const raw = 4 + fplForm(player, lastSeasonStats) * 0.22;
+// basePrice is the admin-set starting valuation for a player (defaults to ₦4m when unset).
+// Price is never frozen at that number — it keeps moving from there as form builds up,
+// same as real FPL: admins set the starting value, performance moves it week to week.
+function fplPrice(player, lastSeasonStats, basePrice) {
+  const floor = basePrice != null ? basePrice : 4;
+  const raw = floor + fplForm(player, lastSeasonStats) * 0.22;
   const capped = Math.min(raw, 20);
   return Math.round(capped * 2) / 2; // nearest ₦0.5m
 }
@@ -674,6 +678,8 @@ export default function App() {
   const [fplDraftPicks, setFplDraftPicks] = useState([]);
   const [fplDraftCaptain, setFplDraftCaptain] = useState(null);
   const [fplSearchQ, setFplSearchQ] = useState("");
+  const [priceEditId, setPriceEditId] = useState(null);
+  const [priceEditValue, setPriceEditValue] = useState("");
 
   useEffect(() => { loadPlayers(); loadMeta(); loadFplData(); }, []);
 
@@ -1000,6 +1006,32 @@ export default function App() {
     }
   }
 
+  // ---- Admin: set each player's starting value — price then moves with form from there ----
+  function startPriceEdit(player) {
+    setPriceEditId(player.id);
+    setPriceEditValue(player.base_price != null ? String(player.base_price) : "");
+  }
+  async function saveBasePrice(player) {
+    const raw = priceEditValue.trim();
+    let basePrice = null;
+    if (raw !== "") {
+      const parsed = parseFloat(raw);
+      if (isNaN(parsed) || parsed < 0) { showToast("Enter a valid price.", "error"); return; }
+      basePrice = Math.round(parsed * 2) / 2; // snap to nearest ₦0.5m
+    }
+    setSaving(true);
+    try {
+      await sbFetch(`players?id=eq.${player.id}`, { method: "PATCH", body: JSON.stringify({ base_price: basePrice }) });
+      await loadPlayers();
+      setPriceEditId(null);
+      showToast(basePrice == null ? "Reset to default starting value. ✅" : "Starting value set! ✅");
+    } catch (e) {
+      showToast("Failed to update price. Did you add the base_price column?", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   // ---- Share ----
   function handleShareOverview() {
     const canvas = buildLeaderboardsShareCard(scorers, assisters, keepers, motm);
@@ -1021,7 +1053,11 @@ export default function App() {
   // Last season's archived stats, keyed by name, feed into FPL pricing (see priceOf below).
   const lastSeasonMap = {};
   if (seasonArchive[0]) seasonArchive[0].players.forEach((p) => { lastSeasonMap[p.name] = p; });
-  function priceOf(player) { return fplPrice(player, lastSeasonMap[player.name]); }
+  // Admin sets each player's starting value (base_price); the price then keeps moving
+  // with form on top of that, it never gets stuck at the number the admin typed in.
+  function priceOf(player) {
+    return fplPrice(player, lastSeasonMap[player.name], player.base_price);
+  }
 
   const totalGoals = players.reduce((a, p) => a + p.goals, 0);
   const totalAssists = players.reduce((a, p) => a + p.assists, 0);
@@ -1471,6 +1507,39 @@ export default function App() {
               <div style={{ background: "linear-gradient(135deg, #16a34a11, #0f0f23)", border: "1px solid #16a34a33", borderRadius: 16, padding: "12px 16px", fontSize: 12, color: t.textDim, lineHeight: 1.5 }}>
                 🎮 Build a {FPL_SQUAD_SIZE}-player squad within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Prices are set by last season's form and then drift with this season's — the hotter a player is, the pricier. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated.
               </div>
+
+              {isAdmin && (
+                <div style={{ background: t.cardBg, border: "1px solid #f59e0b55", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: "#f59e0b" }}>⚙️ ADMIN · PLAYER VALUES</div>
+                  <div style={{ fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>Set each player's starting value — price then keeps moving up or down with their form on top of it, just like real FPL. It's never frozen. Clear the field and save to go back to the default ₦4m starting value.</div>
+                  <div style={{ maxHeight: 340, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 12 }}>
+                    {[...players].sort((a, b) => priceOf(b) - priceOf(a)).map((p) => {
+                      const hasCustomBase = p.base_price != null;
+                      const editing = priceEditId === p.id;
+                      return (
+                        <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: `1px solid ${t.rowBorder}`, gap: 8 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                            <div style={{ fontSize: 10, color: t.textFaint }}>{positionEmoji[p.position]} {p.position}{hasCustomBase ? ` · starting value ₦${p.base_price}m` : ""}</div>
+                          </div>
+                          {editing ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <input type="number" step="0.5" min="0" autoFocus value={priceEditValue} onChange={(e) => setPriceEditValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveBasePrice(p)} placeholder="4 (default)" style={{ width: 80, background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 6, padding: "6px 8px", color: t.text, fontSize: 13 }} />
+                              <button onClick={() => saveBasePrice(p)} disabled={saving} style={{ background: "#16a34a22", border: "1px solid #16a34a", borderRadius: 6, color: "#22c55e", cursor: "pointer", padding: "5px 8px", fontSize: 11, fontWeight: 700 }}>✓</button>
+                              <button onClick={() => setPriceEditId(null)} style={{ background: "transparent", border: `1px solid ${t.borderLight}`, borderRadius: 6, color: t.textMuted, cursor: "pointer", padding: "5px 8px", fontSize: 11 }}>✕</button>
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 15, color: "#22c55e" }}>₦{priceOf(p)}m{hasCustomBase ? " ⚙️" : ""}</div>
+                              <button onClick={() => startPriceEdit(p)} style={{ background: "rgba(59,130,246,0.15)", border: "none", borderRadius: 6, color: "#3b82f6", cursor: "pointer", padding: "5px 8px", fontSize: 11 }}>Edit</button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {!fplManager ? (
                 <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
