@@ -277,20 +277,50 @@ function drawShareFooter(ctx, w, h) {
 // highlights: 3 spotlight chips ({label,name,value,statLabel,color}).
 // players: full squad, each stat row shows Goals, Assists and Clean Sheets together.
 // Three vertical leaderboards side by side: Top Scorers | Top Assists | Clean Sheets — full lists, ranked.
-function buildLeaderboardsShareCard(scorers, assisters, keepers) {
+function buildLeaderboardsShareCard(scorers, assisters, keepers, motm) {
   const w = 1080;
   const headerH = 290;
+  const motmH = motm ? 180 : 0;
   const colHeaderH = 66;
   const rowH = 40;
   const footerH = 130;
   const padBottom = 30;
   const maxRows = Math.max(scorers.length, assisters.length, keepers.length, 1);
-  const h = headerH + colHeaderH + maxRows * rowH + footerH + padBottom;
+  const h = headerH + motmH + colHeaderH + maxRows * rowH + footerH + padBottom;
 
   const c = newShareCanvas(w, h);
   const ctx = c.getContext("2d");
   paintBrandBg(ctx, w, h);
   drawShareHeader(ctx, w, "Season Leaderboards");
+
+  if (motm) {
+    const bx = 80, by = headerH, bw = w - 160, bh = motmH - 30;
+    ctx.fillStyle = "rgba(251,146,60,0.08)";
+    roundRectPath(ctx, bx, by, bw, bh, 20);
+    ctx.fill();
+    ctx.strokeStyle = "#fb923c66";
+    ctx.lineWidth = 3;
+    roundRectPath(ctx, bx, by, bw, bh, 20);
+    ctx.stroke();
+    ctx.textAlign = "left";
+    ctx.font = "62px Arial, sans-serif";
+    ctx.fillText("🏆", bx + 28, by + bh / 2 + 22);
+    ctx.fillStyle = "#fb923c";
+    ctx.font = "800 20px Arial, sans-serif";
+    ctx.fillText("MAN OF THE MATCH", bx + 120, by + 46);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 42px Arial, sans-serif";
+    ctx.fillText(motm.name, bx + 120, by + 92);
+    if (motm.note) {
+      ctx.fillStyle = "#aaaaaa";
+      ctx.font = "italic 500 20px Arial, sans-serif";
+      let note = motm.note;
+      const maxW = bw - 160;
+      while (ctx.measureText(note).width > maxW && note.length > 1) note = note.slice(0, -1);
+      if (note !== motm.note) note = `${note.slice(0, -1)}…`;
+      ctx.fillText(`"${note}"`, bx + 120, by + 122);
+    }
+  }
 
   const marginX = 50;
   const gap = 20;
@@ -301,7 +331,7 @@ function buildLeaderboardsShareCard(scorers, assisters, keepers) {
     { x: marginX + (colW + gap) * 2, title: "CLEAN SHEETS", color: "#3b82f6", data: keepers, key: "clean_sheets" },
   ];
 
-  const colHeaderY = headerH;
+  const colHeaderY = headerH + motmH;
   columns.forEach((col) => {
     ctx.fillStyle = `${col.color}22`;
     roundRectPath(ctx, col.x, colHeaderY, colW, 46, 12);
@@ -401,6 +431,36 @@ function buildPOTWShareCard(potw) {
   ctx.fillStyle = "#666";
   ctx.font = "500 22px Arial, sans-serif";
   ctx.fillText("SINCE LAST WEEK", w / 2, y + 260);
+  drawShareFooter(ctx, w, h);
+  return c;
+}
+
+function buildMOTMShareCard(motm) {
+  const w = 1080, h = 1080;
+  const c = newShareCanvas(w, h);
+  const ctx = c.getContext("2d");
+  paintBrandBg(ctx, w, h);
+  ctx.textAlign = "center";
+  ctx.font = "110px Arial, sans-serif";
+  ctx.fillText("🏆", w / 2, 320);
+  ctx.fillStyle = "#fb923c";
+  ctx.font = "700 30px Arial, sans-serif";
+  ctx.fillText("MAN OF THE MATCH", w / 2, 390);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "900 82px Arial, sans-serif";
+  ctx.fillText(motm.name, w / 2, 500);
+  ctx.fillStyle = "#8a8a9a";
+  ctx.font = "600 26px Arial, sans-serif";
+  ctx.fillText(motm.position || "", w / 2, 540);
+  if (motm.note) {
+    ctx.fillStyle = "#cccccc";
+    ctx.font = "italic 500 24px Arial, sans-serif";
+    let note = motm.note;
+    const maxW = w - 200;
+    while (ctx.measureText(note).width > maxW && note.length > 1) note = note.slice(0, -1);
+    if (note !== motm.note) note = `${note.slice(0, -1)}…`;
+    ctx.fillText(`"${note}"`, w / 2, 600);
+  }
   drawShareFooter(ctx, w, h);
   return c;
 }
@@ -513,6 +573,13 @@ export default function App() {
   const [confirmSeasonReset, setConfirmSeasonReset] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
+  // Man of the Match
+  const [motm, setMotm] = useState(null);
+  const [motmHistory, setMotmHistory] = useState([]);
+  const [showMotmAward, setShowMotmAward] = useState(false);
+  const [showMotmHistory, setShowMotmHistory] = useState(false);
+  const [motmForm, setMotmForm] = useState({ name: "", note: "" });
+
   useEffect(() => { loadPlayers(); loadMeta(); }, []);
 
   async function loadPlayers() {
@@ -535,12 +602,15 @@ export default function App() {
 
   async function loadMeta() {
     try {
-      const rows = await sbFetch(`app_meta?key=in.(last_week_snapshot,current_potw,season_archive)&select=key,value`);
+      const rows = await sbFetch(`app_meta?key=in.(last_week_snapshot,current_potw,season_archive,motm_history)&select=key,value`);
       const map = {};
       rows.forEach((r) => { map[r.key] = r.value; });
       setLastSnapshot(map.last_week_snapshot || null);
       setPotw(map.current_potw || null);
       setSeasonArchive(map.season_archive || []);
+      const history = map.motm_history || [];
+      setMotmHistory(history);
+      setMotm(history[0] || null);
     } catch (e) {
       // app_meta table not created yet (or offline) — new features degrade gracefully
       console.warn("Greedie Liga: app_meta unavailable", e);
@@ -630,6 +700,27 @@ export default function App() {
     }
   }
 
+  // ---- Man of the Match ----
+  async function awardMotm() {
+    if (!motmForm.name) return;
+    setSaving(true);
+    try {
+      const player = players.find((p) => p.name === motmForm.name);
+      const entry = { name: motmForm.name, position: player?.position || "", note: motmForm.note.trim(), awarded_at: new Date().toISOString() };
+      const updated = [entry, ...motmHistory].slice(0, 50);
+      await setMeta("motm_history", updated);
+      setMotmHistory(updated);
+      setMotm(entry);
+      setShowMotmAward(false);
+      setMotmForm({ name: "", note: "" });
+      showToast(`🏆 ${entry.name} named Man of the Match!`);
+    } catch (e) {
+      showToast("Failed to save MOTM. Did you create the app_meta table?", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   // ---- New Season ----
   async function startNewSeason() {
     setSaving(true);
@@ -660,8 +751,14 @@ export default function App() {
 
   // ---- Share ----
   function handleShareOverview() {
-    const canvas = buildLeaderboardsShareCard(scorers, assisters, keepers);
+    const canvas = buildLeaderboardsShareCard(scorers, assisters, keepers, motm);
     shareCanvasAsImage(canvas, "greedie-liga-leaderboards.png");
+  }
+
+  function handleShareMotm() {
+    if (!motm) return;
+    const canvas = buildMOTMShareCard(motm);
+    shareCanvasAsImage(canvas, `greedie-liga-motm-${motm.name.toLowerCase().replace(/\s+/g, "-")}.png`);
   }
 
   function handleSharePOTW() {
@@ -773,6 +870,34 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {/* Man of the Match */}
+            {motm ? (
+              <div style={{ background: "linear-gradient(135deg, #fb923c11, #07071a)", border: "1px solid #fb923c33", borderRadius: 16, padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ fontSize: 26 }}>🏆</div>
+                    <div>
+                      <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: "#fb923c" }}>MAN OF THE MATCH</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: t.text }}>{motm.name} <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500 }}>{motm.position}</span></div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => setShowMotmHistory(true)} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "7px 12px", color: t.textDim, cursor: "pointer", fontSize: 12 }}>📜 History</button>
+                    <button onClick={handleShareMotm} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "7px 12px", color: t.textDim, cursor: "pointer", fontSize: 12 }}>📤 Share</button>
+                  </div>
+                </div>
+                {motm.note && <div style={{ fontSize: 13, color: t.textDim, fontStyle: "italic", marginTop: 8 }}>"{motm.note}"</div>}
+                <div style={{ fontSize: 10, color: t.textFaint, marginTop: 10, textTransform: "uppercase", letterSpacing: 1 }}>
+                  Awarded {new Date(motm.awarded_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · Won {motmHistory.filter((m) => m.name === motm.name).length}× this season
+                </div>
+              </div>
+            ) : (
+              <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18, display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ fontSize: 26, opacity: 0.5 }}>🏆</div>
+                <div style={{ fontSize: 12, color: t.textMuted, lineHeight: 1.5 }}>No Man of the Match yet. An admin can award one from the Squad tab — <span style={{ color: t.textDim }}>Admin Tools → Award MOTM</span>.</div>
+              </div>
+            )}
 
             {/* Player of the Week */}
             {potw ? (
@@ -1023,6 +1148,7 @@ export default function App() {
                 <div style={{ background: t.cardBg, border: `1px solid ${t.borderLight}`, borderRadius: 14, padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
                   <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: t.textDim }}>ADMIN TOOLS</div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button onClick={() => setShowMotmAward(true)} style={{ background: "linear-gradient(135deg, #c2410c, #fb923c)", border: "none", borderRadius: 8, padding: "10px 14px", color: "#2a0f02", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>🏆 Award MOTM</button>
                     <button onClick={startNewWeek} disabled={saving} style={{ background: "linear-gradient(135deg, #ca8a04, #facc15)", border: "none", borderRadius: 8, padding: "10px 14px", color: "#1a1305", fontWeight: 700, cursor: "pointer", fontSize: 12, opacity: saving ? 0.6 : 1 }}>🌟 Start New Week</button>
                     <button onClick={() => setShowHistory(true)} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "10px 14px", color: t.textDim, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>📜 Past Seasons</button>
                     <button onClick={() => setConfirmSeasonReset(true)} style={{ background: "transparent", border: "1px solid #ef4444", borderRadius: 8, padding: "10px 14px", color: "#ef4444", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>🔄 New Season</button>
@@ -1172,6 +1298,77 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {showMotmAward && (
+        <div style={{ position: "fixed", inset: 0, background: t.overlay, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}>
+          <div style={{ background: t.cardBg, border: `1px solid ${t.borderLight}`, borderRadius: 20, padding: 28, width: "100%", maxWidth: 400 }}>
+            <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 22, letterSpacing: 2, marginBottom: 20, color: "#fb923c" }}>🏆 AWARD MAN OF THE MATCH</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Player</div>
+                <select value={motmForm.name} onChange={(e) => setMotmForm({ ...motmForm, name: e.target.value })} style={{ width: "100%", background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 8, padding: "12px 14px", color: t.text, fontSize: 15 }}>
+                  <option value="">Select a player…</option>
+                  {[...players].sort((a, b) => a.name.localeCompare(b.name)).map((p) => (
+                    <option key={p.id} value={p.name}>{p.name} ({p.position})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Note (optional)</div>
+                <input type="text" placeholder="e.g. Hat-trick vs Tuesday's game" value={motmForm.note} onChange={(e) => setMotmForm({ ...motmForm, note: e.target.value })} style={{ width: "100%", background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 8, padding: "12px 14px", color: t.text, fontSize: 14 }} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+              <button onClick={() => { setShowMotmAward(false); setMotmForm({ name: "", note: "" }); }} style={{ flex: 1, background: t.toggleBg, border: "none", borderRadius: 10, padding: 13, color: t.textMuted, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+              <button onClick={awardMotm} disabled={saving || !motmForm.name} style={{ flex: 2, background: "linear-gradient(135deg, #c2410c, #fb923c)", border: "none", borderRadius: 10, padding: 13, color: "#2a0f02", cursor: "pointer", fontWeight: 700, fontSize: 15, opacity: saving || !motmForm.name ? 0.6 : 1 }}>
+                {saving ? "Awarding..." : "🏆 Award"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMotmHistory && (() => {
+        const tallyMap = {};
+        motmHistory.forEach((m) => {
+          if (!tallyMap[m.name]) tallyMap[m.name] = { name: m.name, position: m.position, count: 0 };
+          tallyMap[m.name].count += 1;
+        });
+        const tally = Object.values(tallyMap).sort((a, b) => b.count - a.count);
+        const maxWins = Math.max(...tally.map((x) => x.count), 1);
+        return (
+          <div style={{ position: "fixed", inset: 0, background: t.overlay, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}>
+            <div style={{ background: t.cardBg, border: `1px solid ${t.borderLight}`, borderRadius: 20, padding: 24, width: "100%", maxWidth: 440, maxHeight: "80vh", overflowY: "auto" }}>
+              <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 22, letterSpacing: 2, marginBottom: 16, color: "#fb923c" }}>🏆 MOTM HISTORY</div>
+              {motmHistory.length === 0 ? (
+                <div style={{ color: t.textMuted, fontSize: 13, lineHeight: 1.6 }}>No Man of the Match awards yet.</div>
+              ) : (
+                <>
+                  <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 14, letterSpacing: 2, color: t.textDim, marginBottom: 8 }}>MOST WINS</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 22 }}>
+                    {tally.map((p, i) => (
+                      <LeaderRow key={p.name} rank={i + 1} name={p.name} value={p.count} max={maxWins} color="#fb923c" label={p.count === 1 ? "win" : "wins"} t={t} />
+                    ))}
+                  </div>
+                  <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 14, letterSpacing: 2, color: t.textDim, marginBottom: 8 }}>RECENT AWARDS</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {motmHistory.map((m, i) => (
+                      <div key={i} style={{ background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 12, padding: "12px 16px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{m.name} <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500 }}>{m.position}</span></div>
+                          <div style={{ fontSize: 11, color: t.textFaint }}>{new Date(m.awarded_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</div>
+                        </div>
+                        {m.note && <div style={{ fontSize: 12, color: t.textMuted, fontStyle: "italic", marginTop: 4 }}>"{m.note}"</div>}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <button onClick={() => setShowMotmHistory(false)} style={{ marginTop: 18, width: "100%", background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 10, padding: 12, color: t.textDim, cursor: "pointer", fontWeight: 600 }}>Close</button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
