@@ -86,6 +86,14 @@ function isFplLocked(date) {
   const hour = date.getHours() + date.getMinutes() / 60;
   return hour >= FPL_LOCK_HOUR && hour < FPL_UNLOCK_HOUR;
 }
+// "Most Selected" is live all day — updates instantly as managers save squads — but goes
+// blank overnight (11pm–7am) once the day's matches are done, same idea as quiet hours.
+const FPL_STAT_HIDE_HOUR = 23; // 11:00pm
+const FPL_STAT_SHOW_HOUR = 7; // 7:00am
+function isMostSelectedVisible(date) {
+  const hour = date.getHours() + date.getMinutes() / 60;
+  return hour >= FPL_STAT_SHOW_HOUR && hour < FPL_STAT_HIDE_HOUR;
+}
 
 // ---------- FPL pricing ----------
 // A player's price is a STORED number (players.base_price) — not something recalculated live
@@ -1803,6 +1811,35 @@ export default function App() {
                   </div>
                 )}
               </div>
+
+              {isMostSelectedVisible(now) && (() => {
+                const tally = {};
+                fplTeams.forEach((team) => { (team.player_ids || []).forEach((id) => { tally[id] = (tally[id] || 0) + 1; }); });
+                const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+                if (!entries.length) return null;
+                const topCount = entries[0][1];
+                const topPicks = entries.filter(([, c]) => c === topCount).map(([id]) => players.find((p) => p.id === id)).filter(Boolean);
+                if (!topPicks.length) return null;
+                const totalManagers = fplTeams.length;
+                const pct = totalManagers ? Math.round((topCount / totalManagers) * 100) : 0;
+                return (
+                  <div style={{ background: t.cardBg, borderRadius: 16, padding: 20, border: `1px solid ${t.border}` }}>
+                    <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, letterSpacing: 2, marginBottom: 4, color: "#facc15" }}>🎯 MOST SELECTED</div>
+                    <div style={{ fontSize: 10, color: t.textFaint, marginBottom: 14 }}>Live — updates as managers save their squads · goes quiet 11pm–7am</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                      {topPicks.map((p) => (
+                        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 12, padding: "10px 14px" }}>
+                          <div style={{ width: 34, height: 34, borderRadius: 8, background: positionColors[p.position], display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 12 }}>{initialsOf(p.name)}</div>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: 13, color: t.text }}>{p.name}</div>
+                            <div style={{ fontSize: 11, color: t.textMuted }}>{positionEmoji[p.position]} {p.position} · selected by {pct}% of managers</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}
