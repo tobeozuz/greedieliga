@@ -1801,9 +1801,12 @@ export default function App() {
               {(() => {
                 // Most-picked player, tallied live from every saved squad right now.
                 const statVisible = isMostSelectedVisible(now);
-                const tally = {};
-                fplTeams.forEach((team) => { (team.player_ids || []).forEach((id) => { tally[id] = (tally[id] || 0) + 1; }); });
-                const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+                // Use a Map (not a plain object) so player ids keep their original type —
+                // object keys get stringified, which broke the players.find(...) lookup below
+                // for numeric ids and made this look like "no squads saved" even with real picks.
+                const tally = new Map();
+                fplTeams.forEach((team) => { (team.player_ids || []).forEach((id) => { tally.set(id, (tally.get(id) || 0) + 1); }); });
+                const entries = [...tally.entries()].sort((a, b) => b[1] - a[1]);
                 const topCount = entries.length ? entries[0][1] : 0;
                 const topPicks = entries.filter(([, c]) => c === topCount).map(([id]) => players.find((p) => p.id === id)).filter(Boolean);
                 const totalManagers = fplTeams.length;
