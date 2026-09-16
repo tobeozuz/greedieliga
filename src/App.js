@@ -1798,25 +1798,9 @@ export default function App() {
                 </>
               )}
 
-              <div style={{ background: t.cardBg, borderRadius: 16, padding: 20, border: `1px solid ${t.border}` }}>
-                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: 3, marginBottom: 4, color: "#22c55e" }}>🏆 FPL LEADERBOARD</div>
-                {leaderboard.length > 0 && <div style={{ fontSize: 10, color: t.textFaint, marginBottom: 12 }}>Tap a manager to see their squad</div>}
-                {leaderboard.length === 0 ? (
-                  <div style={{ fontSize: 12, color: t.textMuted }}>No managers yet — be the first to build a squad.</div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {leaderboard.map((team, i) => (
-                      <LeaderRow key={team.id} rank={i + 1} name={team.managerName} value={team.total_points || 0} max={maxPts} color="#22c55e" label="pts" t={t} onClick={() => setViewingTeam(team)} />
-                    ))}
-                  </div>
-                )}
-              </div>
-
               {(() => {
-                // Always render the card shell — a card that silently vanishes depending on time
-                // of day or data state is confusing to debug from the outside. Its CONTENT changes
-                // (quiet hours / no squads yet / live picks), but the card itself is always there.
-                const quiet = !isMostSelectedVisible(now);
+                // Most-picked player, tallied live from every saved squad right now.
+                const statVisible = isMostSelectedVisible(now);
                 const tally = {};
                 fplTeams.forEach((team) => { (team.player_ids || []).forEach((id) => { tally[id] = (tally[id] || 0) + 1; }); });
                 const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
@@ -1824,24 +1808,43 @@ export default function App() {
                 const topPicks = entries.filter(([, c]) => c === topCount).map(([id]) => players.find((p) => p.id === id)).filter(Boolean);
                 const totalManagers = fplTeams.length;
                 const pct = totalManagers ? Math.round((topCount / totalManagers) * 100) : 0;
+                let pickedBadge;
+                if (!statVisible) {
+                  pickedBadge = (
+                    <div style={{ background: t.toggleBg, borderRadius: 10, padding: "6px 12px", fontSize: 11, color: t.textFaint, whiteSpace: "nowrap" }}>
+                      🌙 Most Picked — back at 7am
+                    </div>
+                  );
+                } else if (topPicks.length === 0) {
+                  pickedBadge = (
+                    <div style={{ background: t.toggleBg, borderRadius: 10, padding: "6px 12px", fontSize: 11, color: t.textFaint, whiteSpace: "nowrap" }}>
+                      🎯 Most Picked — no squads saved yet
+                    </div>
+                  );
+                } else {
+                  pickedBadge = (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+                      {topPicks.map((p) => (
+                        <div key={p.id} style={{ background: "#facc1522", border: "1px solid #facc1555", borderRadius: 10, padding: "6px 12px", fontSize: 11, color: t.textDim, whiteSpace: "nowrap" }}>
+                          <span style={{ color: "#facc15", fontWeight: 700 }}>🎯 Most Picked:</span> {p.name} <span style={{ color: "#facc15", fontWeight: 700 }}>{pct}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
                 return (
                   <div style={{ background: t.cardBg, borderRadius: 16, padding: 20, border: `1px solid ${t.border}` }}>
-                    <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, letterSpacing: 2, marginBottom: 4, color: "#facc15" }}>🎯 MOST SELECTED</div>
-                    <div style={{ fontSize: 10, color: t.textFaint, marginBottom: 14 }}>Live — updates as managers save their squads · goes quiet 11pm–7am</div>
-                    {quiet ? (
-                      <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "10px 0" }}>🌙 Quiet hours — back at 7am.</div>
-                    ) : !topPicks.length ? (
-                      <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "10px 0" }}>No squads picked yet — be the first!</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 4 }}>
+                      <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: 3, color: "#22c55e" }}>🏆 FPL LEADERBOARD</div>
+                      {pickedBadge}
+                    </div>
+                    {leaderboard.length > 0 && <div style={{ fontSize: 10, color: t.textFaint, marginBottom: 12 }}>Tap a manager to see their squad</div>}
+                    {leaderboard.length === 0 ? (
+                      <div style={{ fontSize: 12, color: t.textMuted }}>No managers yet — be the first to build a squad.</div>
                     ) : (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                        {topPicks.map((p) => (
-                          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 12, padding: "10px 14px" }}>
-                            <div style={{ width: 34, height: 34, borderRadius: 8, background: positionColors[p.position], display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 12 }}>{initialsOf(p.name)}</div>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: 13, color: t.text }}>{p.name}</div>
-                              <div style={{ fontSize: 11, color: t.textMuted }}>{positionEmoji[p.position]} {p.position} · selected by {pct}% of managers</div>
-                            </div>
-                          </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {leaderboard.map((team, i) => (
+                          <LeaderRow key={team.id} rank={i + 1} name={team.managerName} value={team.total_points || 0} max={maxPts} color="#22c55e" label="pts" t={t} onClick={() => setViewingTeam(team)} />
                         ))}
                       </div>
                     )}
