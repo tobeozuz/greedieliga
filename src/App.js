@@ -66,7 +66,7 @@ const STARMAN = "✍️Starman⭐";
 
 // ---------- FPL ----------
 // Budget per manager, in millions of naira. Edit this one number to rebalance the whole game.
-const FPL_BUDGET = 40;
+const FPL_BUDGET = 35;
 // Outfield players each manager picks (Defender/Midfielder/Striker) — the goalie below doesn't count toward this.
 const FPL_SQUAD_SIZE = 4;
 // Points awarded per stat when a manager's picked player records it (captain doubles these).
@@ -558,12 +558,20 @@ function LeaderRow({ rank, name, value, max, color, label, t, onClick }) {
   );
 }
 
-// A shirt-style player card for the FPL pitch view — badge for price, optional captain star,
+// Initials for a pitch shirt badge — same plain, iconless marker style as the main player list
+// (colored by position), instead of a decorative emoji picture.
+function initialsOf(name) {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+// A shirt-style player card for the FPL pitch view — badge for price, optional "C" for captain,
 // optional "✕" to remove (edit mode), tap the shirt to make them captain (edit mode).
 function PitchPlayerCard({ player, price, isCaptain, onRemove, onMakeCaptain }) {
   const isGoalkeeper = player.position === "Goalkeeper";
   const color = isGoalkeeper ? GOALKEEPER_STYLE.color : positionColors[player.position];
-  const emoji = isGoalkeeper ? GOALKEEPER_STYLE.emoji : positionEmoji[player.position];
+  const badgeText = isGoalkeeper ? "GK" : initialsOf(player.name);
   return (
     <div style={{ position: "relative", width: 88, display: "flex", flexDirection: "column", alignItems: "center" }}>
       <div style={{ position: "absolute", top: -8, left: -4, background: "#0d0d2b", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "2px 6px", fontSize: 10, fontWeight: 800, color: "#fff", zIndex: 2, whiteSpace: "nowrap" }}>
@@ -579,11 +587,12 @@ function PitchPlayerCard({ player, price, isCaptain, onRemove, onMakeCaptain }) 
           background: `linear-gradient(160deg, ${color}, ${color}aa)`,
           border: isCaptain ? "2px solid #facc15" : "2px solid rgba(255,255,255,0.4)",
           display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 22, marginTop: 10, boxShadow: "0 4px 10px rgba(0,0,0,0.35)",
+          fontSize: 18, fontWeight: 800, color: "#fff", letterSpacing: 0.5,
+          marginTop: 10, boxShadow: "0 4px 10px rgba(0,0,0,0.35)",
           cursor: onMakeCaptain ? "pointer" : "default",
         }}
       >
-        {isCaptain ? "★" : emoji}
+        {isCaptain ? "C" : badgeText}
       </div>
       <div style={{ background: "#ffffff", color: "#111", borderRadius: 6, padding: "3px 6px", fontSize: 10, fontWeight: 700, marginTop: 6, maxWidth: 84, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {player.name}{isCaptain ? " (C)" : ""}
@@ -1529,6 +1538,10 @@ export default function App() {
           const pickablePlayers = [...players]
             .filter((p) => p.name.toLowerCase().includes(fplSearchQ.toLowerCase()))
             .sort((a, b) => priceOf(b) - priceOf(a));
+          // A squad saved under an older, higher budget can end up over the current one
+          // (e.g. the budget gets lowered later) — flag it so the manager has to fix it.
+          const myTeamValue = fplTeam ? (fplTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0) : 0;
+          const myTeamOverBudget = !!fplTeam && myTeamValue > FPL_BUDGET;
 
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1595,7 +1608,31 @@ export default function App() {
                   </div>
 
                   {!fplEditing ? (
-                    fplTeam ? (
+                    myTeamOverBudget ? (
+                      <div style={{ background: t.cardBg, border: "2px solid #ef4444", borderRadius: 16, padding: 18 }}>
+                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: "#ef4444", marginBottom: 10 }}>⚠️ SQUAD OVER BUDGET</div>
+                        <div style={{ fontSize: 13, color: t.textDim, lineHeight: 1.6, marginBottom: 14 }}>
+                          The budget is now ₦{FPL_BUDGET}m, but your squad is worth ₦{myTeamValue.toFixed(1)}m — ₦{(myTeamValue - FPL_BUDGET).toFixed(1)}m over. You won't be able to do anything else here until you edit your team and bring it back within budget.
+                        </div>
+                        <Pitch>
+                          <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                            <PitchPlayerCard player={FPL_GOALKEEPER} price={null} isCaptain={false} />
+                          </div>
+                          {["Defender", "Midfielder", "Striker"].map((pos) => {
+                            const rowPlayers = (fplTeam.player_ids || []).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
+                            if (!rowPlayers.length) return null;
+                            return (
+                              <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                                {rowPlayers.map((p) => (
+                                  <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={fplTeam.captain_id === p.id} />
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </Pitch>
+                        <button onClick={startFplBuild} style={{ marginTop: 14, width: "100%", background: "linear-gradient(135deg, #ef4444, #f87171)", border: "none", borderRadius: 10, padding: 13, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>✏️ Fix My Squad</button>
+                      </div>
+                    ) : fplTeam ? (
                       <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                           <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: t.textDim }}>MY SQUAD</div>
@@ -1621,7 +1658,7 @@ export default function App() {
                           <div style={{ fontSize: 11, color: t.textGhost, marginTop: 10 }}>Some picked players were removed from the liga.</div>
                         )}
                         <div style={{ fontSize: 11, color: t.textFaint, marginTop: 12, textTransform: "uppercase", letterSpacing: 1 }}>
-                          Squad value: ₦{(fplTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0).toFixed(1)}m
+                          Squad value: ₦{myTeamValue.toFixed(1)}m
                         </div>
                       </div>
                     ) : (
