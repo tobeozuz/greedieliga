@@ -587,7 +587,7 @@ function initialsOf(name) {
 }
 // A shirt-style player card for the FPL pitch view — badge for price, optional "C" for captain,
 // optional "✕" to remove (edit mode), tap the shirt to make them captain (edit mode).
-function PitchPlayerCard({ player, price, isCaptain, onRemove, onMakeCaptain }) {
+function PitchPlayerCard({ player, price, points, isCaptain, onRemove, onMakeCaptain }) {
   const isGoalkeeper = player.position === "Goalkeeper";
   const color = isGoalkeeper ? GOALKEEPER_STYLE.color : positionColors[player.position];
   const badgeText = isGoalkeeper ? "GK" : initialsOf(player.name);
@@ -616,6 +616,11 @@ function PitchPlayerCard({ player, price, isCaptain, onRemove, onMakeCaptain }) 
       <div style={{ background: "#ffffff", color: "#111", borderRadius: 6, padding: "3px 6px", fontSize: 10, fontWeight: 700, marginTop: 6, maxWidth: 84, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {player.name}{isCaptain ? " (C)" : ""}
       </div>
+      {points != null && (
+        <div style={{ background: "#16a34a", color: "#fff", borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 800, marginTop: 4 }}>
+          {points} pt{points === 1 ? "" : "s"}
+        </div>
+      )}
     </div>
   );
 }
@@ -830,7 +835,11 @@ export default function App() {
         const isCaptain = team.captain_id === playerId;
         const teamDelta = pointsDelta * (isCaptain ? 2 : 1);
         const newTotal = (team.total_points || 0) + teamDelta;
-        return sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "PATCH", body: JSON.stringify({ total_points: newTotal, updated_at: new Date().toISOString() }) });
+        // Per-player ledger so managers can see how each squad member contributed,
+        // not just the team's combined total.
+        const newPlayerPoints = { ...(team.player_points || {}) };
+        newPlayerPoints[playerId] = (newPlayerPoints[playerId] || 0) + teamDelta;
+        return sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "PATCH", body: JSON.stringify({ total_points: newTotal, player_points: newPlayerPoints, updated_at: new Date().toISOString() }) });
       }));
       await loadFplData();
     } catch (e) {
@@ -963,7 +972,7 @@ export default function App() {
       setPotw(null);
       // Fresh FPL competition too — squads stay intact, points reset to zero.
       if (fplTeams.length) {
-        await Promise.all(fplTeams.map((team) => sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "PATCH", body: JSON.stringify({ total_points: 0 }) })));
+        await Promise.all(fplTeams.map((team) => sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "PATCH", body: JSON.stringify({ total_points: 0, player_points: {} }) })));
         await loadFplData();
       }
       await loadPlayers();
@@ -1702,7 +1711,7 @@ export default function App() {
                             return (
                               <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
                                 {rowPlayers.map((p) => (
-                                  <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={fplTeam.captain_id === p.id} />
+                                  <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} points={(fplTeam.player_points || {})[p.id] || 0} isCaptain={fplTeam.captain_id === p.id} />
                                 ))}
                               </div>
                             );
@@ -1730,7 +1739,7 @@ export default function App() {
                             return (
                               <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
                                 {rowPlayers.map((p) => (
-                                  <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={fplTeam.captain_id === p.id} />
+                                  <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} points={(fplTeam.player_points || {})[p.id] || 0} isCaptain={fplTeam.captain_id === p.id} />
                                 ))}
                               </div>
                             );
@@ -2153,7 +2162,7 @@ export default function App() {
                       return (
                         <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
                           {rowPlayers.map((p) => (
-                            <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={viewingTeam.captain_id === p.id} />
+                            <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} points={(viewingTeam.player_points || {})[p.id] || 0} isCaptain={viewingTeam.captain_id === p.id} />
                           ))}
                         </div>
                       );
