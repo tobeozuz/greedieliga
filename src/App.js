@@ -75,6 +75,17 @@ const FPL_POINTS = { goal: 4, assist: 3, cleanSheet: 4 };
 // shown purely so the pitch reads like a real lineup with a keeper at the back.
 const FPL_GOALKEEPER = { name: "Goalkeeper", position: "Goalkeeper" };
 const GOALKEEPER_STYLE = { color: "#94a3b8", emoji: "🧤" };
+// Squad lock window, in the viewer's own local time. On a gameday, squads lock at 5:00pm and
+// reopen at 8:00pm — no building or editing during that window, same as real FPL's deadline.
+// getDay(): 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat.
+const FPL_GAMEDAYS = [0, 1, 3, 5, 6]; // Sunday, Monday, Wednesday, Friday, Saturday
+const FPL_LOCK_HOUR = 17; // 5:00pm
+const FPL_UNLOCK_HOUR = 20; // 8:00pm
+function isFplLocked(date) {
+  if (!FPL_GAMEDAYS.includes(date.getDay())) return false;
+  const hour = date.getHours() + date.getMinutes() / 60;
+  return hour >= FPL_LOCK_HOUR && hour < FPL_UNLOCK_HOUR;
+}
 
 // ---------- FPL pricing ----------
 // A player's price is a STORED number (players.base_price) — not something recalculated live
@@ -695,8 +706,13 @@ export default function App() {
   const [priceEditId, setPriceEditId] = useState(null);
   const [priceEditValue, setPriceEditValue] = useState("");
   const [viewingTeam, setViewingTeam] = useState(null); // an fpl_teams row being viewed read-only from the leaderboard
+  const [now, setNow] = useState(() => new Date()); // ticks so the squad lock window flips live, no refresh needed
 
   useEffect(() => { loadPlayers(); loadMeta(); loadFplData(); }, []);
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000); // check twice a minute — plenty for a 5pm/8pm cutoff
+    return () => clearInterval(id);
+  }, []);
 
   async function loadPlayers() {
     try {
@@ -985,6 +1001,10 @@ export default function App() {
   }
 
   function startFplBuild() {
+    if (isFplLocked(now)) {
+      showToast(`Squads are locked until 8:00pm on gamedays. Try again after 8pm.`, "error");
+      return;
+    }
     if (fplTeam) {
       setFplDraftPicks([...(fplTeam.player_ids || [])]);
       setFplDraftCaptain(fplTeam.captain_id || null);
@@ -1017,6 +1037,10 @@ export default function App() {
 
   async function saveFplTeam() {
     if (!fplManager) return;
+    if (isFplLocked(now)) {
+      showToast(`Squads are locked until 8:00pm on gamedays. Try again after 8pm.`, "error");
+      return;
+    }
     if (fplDraftPicks.length !== FPL_SQUAD_SIZE) {
       showToast(`Pick exactly ${FPL_SQUAD_SIZE} players before saving.`, "error");
       return;
@@ -1542,12 +1566,19 @@ export default function App() {
           // (e.g. the budget gets lowered later) — flag it so the manager has to fix it.
           const myTeamValue = fplTeam ? (fplTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0) : 0;
           const myTeamOverBudget = !!fplTeam && myTeamValue > FPL_BUDGET;
+          const locked = isFplLocked(now);
 
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ background: "linear-gradient(135deg, #16a34a11, #0f0f23)", border: "1px solid #16a34a33", borderRadius: 16, padding: "12px 16px", fontSize: 12, color: t.textDim, lineHeight: 1.5 }}>
-                🎮 Build a {FPL_SQUAD_SIZE}-player squad within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Prices are set by the admin and only move once a week, when a new week is started, based on that week's performance. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated.
+                🎮 Build a {FPL_SQUAD_SIZE}-player squad within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Prices are set by the admin and only move once a week, when a new week is started, based on that week's performance. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated. Squads lock at 5pm and reopen at 8pm on gamedays (Sun, Mon, Wed, Fri, Sat).
               </div>
+
+              {locked && (
+                <div style={{ background: "linear-gradient(135deg, #ef444422, #0f0f23)", border: "1px solid #ef444466", borderRadius: 16, padding: "14px 16px", fontSize: 13, color: "#ef4444", fontWeight: 600, textAlign: "center" }}>
+                  🔒 Squads are locked for gameday — no building or editing until 8:00pm.
+                </div>
+              )}
 
               {isAdmin && (
                 <div style={{ background: t.cardBg, border: "1px solid #f59e0b55", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1630,13 +1661,17 @@ export default function App() {
                             );
                           })}
                         </Pitch>
-                        <button onClick={startFplBuild} style={{ marginTop: 14, width: "100%", background: "linear-gradient(135deg, #ef4444, #f87171)", border: "none", borderRadius: 10, padding: 13, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>✏️ Fix My Squad</button>
+                        {locked ? (
+                          <div style={{ marginTop: 14, fontSize: 12, color: "#ef4444", textAlign: "center" }}>🔒 Locked until 8:00pm — you'll be able to fix this once squads reopen.</div>
+                        ) : (
+                          <button onClick={startFplBuild} style={{ marginTop: 14, width: "100%", background: "linear-gradient(135deg, #ef4444, #f87171)", border: "none", borderRadius: 10, padding: 13, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>✏️ Fix My Squad</button>
+                        )}
                       </div>
                     ) : fplTeam ? (
                       <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                           <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: t.textDim }}>MY SQUAD</div>
-                          <button onClick={startFplBuild} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "7px 12px", color: t.textDim, cursor: "pointer", fontSize: 12 }}>✏️ Edit Team</button>
+                          <button onClick={startFplBuild} disabled={locked} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "7px 12px", color: t.textDim, cursor: locked ? "not-allowed" : "pointer", fontSize: 12, opacity: locked ? 0.5 : 1 }}>{locked ? "🔒 Locked" : "✏️ Edit Team"}</button>
                         </div>
                         <Pitch>
                           <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
@@ -1665,7 +1700,7 @@ export default function App() {
                       <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 22, textAlign: "center" }}>
                         <div style={{ fontSize: 26, marginBottom: 8 }}>⚽</div>
                         <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 14 }}>You haven't picked a squad yet.</div>
-                        <button onClick={startFplBuild} style={{ background: "linear-gradient(135deg, #16a34a, #4ade80)", border: "none", borderRadius: 10, padding: "12px 20px", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>Build My Squad</button>
+                        <button onClick={startFplBuild} disabled={locked} style={{ background: locked ? t.toggleBg : "linear-gradient(135deg, #16a34a, #4ade80)", border: locked ? `1px solid ${t.toggleBorder}` : "none", borderRadius: 10, padding: "12px 20px", color: locked ? t.textDim : "#fff", fontWeight: 700, cursor: locked ? "not-allowed" : "pointer", fontSize: 14, opacity: locked ? 0.6 : 1 }}>{locked ? "🔒 Locked until 8pm" : "Build My Squad"}</button>
                       </div>
                     )
                   ) : (
@@ -1727,14 +1762,18 @@ export default function App() {
                       {(() => {
                         const incomplete = fplDraftPicks.length !== FPL_SQUAD_SIZE;
                         const overBudget = draftRemaining < 0;
-                        const blocked = fplSaving || incomplete || overBudget;
+                        const blocked = fplSaving || incomplete || overBudget || locked;
                         let label = "💾 Save Team";
                         if (fplSaving) label = "Saving...";
+                        else if (locked) label = "🔒 Locked until 8pm";
                         else if (incomplete) label = `Pick ${FPL_SQUAD_SIZE - fplDraftPicks.length} more`;
                         else if (overBudget) label = `Over budget by ₦${Math.abs(draftRemaining).toFixed(1)}m`;
                         return (
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                            {overBudget && !incomplete && (
+                            {locked && (
+                              <div style={{ fontSize: 11, color: "#ef4444", textAlign: "center" }}>Squads are locked for gameday — you can't save until 8:00pm. Feel free to keep planning, just Cancel for now.</div>
+                            )}
+                            {overBudget && !incomplete && !locked && (
                               <div style={{ fontSize: 11, color: "#ef4444", textAlign: "center" }}>You're over budget — remove or swap a player to save.</div>
                             )}
                             <div style={{ display: "flex", gap: 10 }}>
