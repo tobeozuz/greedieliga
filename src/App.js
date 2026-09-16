@@ -1874,11 +1874,46 @@ export default function App() {
                     </div>
                   );
                 }
+
+                // Most-captained player, same live tally but keyed off captain_id.
+                const capTally = new Map();
+                fplTeams.forEach((team) => { if (team.captain_id != null) capTally.set(team.captain_id, (capTally.get(team.captain_id) || 0) + 1); });
+                const capEntries = [...capTally.entries()].sort((a, b) => b[1] - a[1]);
+                const topCapCount = capEntries.length ? capEntries[0][1] : 0;
+                const topCaptains = capEntries.filter(([, c]) => c === topCapCount).map(([id]) => players.find((p) => p.id === id)).filter(Boolean);
+                const capPct = totalManagers ? Math.round((topCapCount / totalManagers) * 100) : 0;
+                let captainBadge;
+                if (!statVisible) {
+                  captainBadge = (
+                    <div style={{ background: t.toggleBg, borderRadius: 10, padding: "6px 12px", fontSize: 11, color: t.textFaint, whiteSpace: "nowrap" }}>
+                      🌙 Most Captained — back at 7am
+                    </div>
+                  );
+                } else if (topCaptains.length === 0) {
+                  captainBadge = (
+                    <div style={{ background: t.toggleBg, borderRadius: 10, padding: "6px 12px", fontSize: 11, color: t.textFaint, whiteSpace: "nowrap" }}>
+                      🅲 Most Captained — no captains set yet
+                    </div>
+                  );
+                } else {
+                  captainBadge = (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+                      {topCaptains.map((p) => (
+                        <div key={p.id} style={{ background: "#3b82f622", border: "1px solid #3b82f655", borderRadius: 10, padding: "6px 12px", fontSize: 11, color: t.textDim, whiteSpace: "nowrap" }}>
+                          <span style={{ color: "#3b82f6", fontWeight: 700 }}>🅲 Most Captained:</span> {p.name} <span style={{ color: "#3b82f6", fontWeight: 700 }}>{capPct}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
                 return (
                   <div style={{ background: t.cardBg, borderRadius: 16, padding: 20, border: `1px solid ${t.border}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 4 }}>
                       <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: 3, color: "#22c55e" }}>🏆 FPL LEADERBOARD</div>
-                      {pickedBadge}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                        {pickedBadge}
+                        {captainBadge}
+                      </div>
                     </div>
                     {leaderboard.length > 0 && <div style={{ fontSize: 10, color: t.textFaint, marginBottom: 12 }}>Tap a manager to see their squad</div>}
                     {leaderboard.length === 0 ? (
