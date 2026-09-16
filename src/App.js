@@ -663,6 +663,7 @@ export default function App() {
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmDeleteTeam, setConfirmDeleteTeam] = useState(null); // an over-budget fpl_teams row admin is about to remove
 
   // Theme
   const [isDark, setIsDark] = useState(() => {
@@ -803,6 +804,18 @@ export default function App() {
       setConfirmDelete(null);
       showToast(`${player.name} removed ✅`);
     } catch (e) { showToast("Failed to delete.", "error"); }
+    finally { setSaving(false); }
+  }
+
+  // Admin cleanup: removes an old squad (e.g. one saved before a budget cut) from the leaderboard entirely.
+  async function deleteFplTeam(team) {
+    setSaving(true);
+    try {
+      await sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "DELETE" });
+      await loadFplData();
+      setConfirmDeleteTeam(null);
+      showToast(`${team.managerName || "Squad"} removed from leaderboard ✅`);
+    } catch (e) { showToast("Failed to remove squad.", "error"); }
     finally { setSaving(false); }
   }
 
@@ -1575,6 +1588,14 @@ export default function App() {
           const myTeamValue = fplTeam ? (fplTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0) : 0;
           const myTeamOverBudget = !!fplTeam && myTeamValue > FPL_BUDGET;
           const locked = isFplLocked(now);
+          // Squads saved under an older, higher budget (before a cut) that are still over the
+          // current one — admin can clear these off the leaderboard instead of waiting on the manager.
+          const overBudgetTeams = leaderboard
+            .map((team) => ({
+              ...team,
+              value: (team.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0),
+            }))
+            .filter((team) => team.value > FPL_BUDGET);
 
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1617,6 +1638,24 @@ export default function App() {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+
+              {isAdmin && overBudgetTeams.length > 0 && (
+                <div style={{ background: t.cardBg, border: "1px solid #ef444466", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: "#ef4444" }}>⚠️ SQUADS OVER ₦{FPL_BUDGET}M BUDGET</div>
+                  <div style={{ fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>Saved under an older, higher budget. Managers are blocked from doing anything else until they fix these themselves — or you can remove them from the leaderboard right now.</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {overBudgetTeams.map((team) => (
+                      <div key={team.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 14px", background: "#ef444411", border: "1px solid #ef444433", borderRadius: 10 }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: t.text }}>{team.managerName}</div>
+                          <div style={{ fontSize: 11, color: "#ef4444" }}>₦{team.value.toFixed(1)}m — ₦{(team.value - FPL_BUDGET).toFixed(1)}m over</div>
+                        </div>
+                        <button onClick={() => setConfirmDeleteTeam(team)} style={{ background: "linear-gradient(135deg, #7f1d1d, #ef4444)", border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>Remove</button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -1872,6 +1911,25 @@ export default function App() {
               <button onClick={() => setConfirmDelete(null)} style={{ flex: 1, background: t.toggleBg, border: "none", borderRadius: 10, padding: 13, color: t.textMuted, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
               <button onClick={() => deletePlayer(confirmDelete)} disabled={saving} style={{ flex: 1, background: "linear-gradient(135deg, #7f1d1d, #ef4444)", border: "none", borderRadius: 10, padding: 13, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 14, opacity: saving ? 0.6 : 1 }}>
                 {saving ? "Deleting..." : "Yes, Remove"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteTeam && (
+        <div style={{ position: "fixed", inset: 0, background: t.overlay, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}>
+          <div style={{ background: t.cardBg, border: "1px solid #ef444455", borderRadius: 20, padding: 28, width: "100%", maxWidth: 360, textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🗑️</div>
+            <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 22, letterSpacing: 2, color: "#ef4444", marginBottom: 8 }}>REMOVE SQUAD</div>
+            <div style={{ color: t.textDim, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
+              Remove <span style={{ color: t.text, fontWeight: 700 }}>{confirmDeleteTeam.managerName}</span>'s squad from the leaderboard? It was saved at ₦{confirmDeleteTeam.value.toFixed(1)}m, over the current ₦{FPL_BUDGET}m budget.<br />
+              <span style={{ color: "#ef4444", fontSize: 12 }}>They'll need to sign in and build a new squad. This cannot be undone.</span>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setConfirmDeleteTeam(null)} style={{ flex: 1, background: t.toggleBg, border: "none", borderRadius: 10, padding: 13, color: t.textMuted, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+              <button onClick={() => deleteFplTeam(confirmDeleteTeam)} disabled={saving} style={{ flex: 1, background: "linear-gradient(135deg, #7f1d1d, #ef4444)", border: "none", borderRadius: 10, padding: 13, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 14, opacity: saving ? 0.6 : 1 }}>
+                {saving ? "Removing..." : "Yes, Remove"}
               </button>
             </div>
           </div>
