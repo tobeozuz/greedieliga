@@ -66,7 +66,7 @@ const STARMAN = "✍️Starman⭐";
 
 // ---------- FPL ----------
 // Budget per manager, in millions of naira. Edit this one number to rebalance the whole game.
-const FPL_BUDGET = 50;
+const FPL_BUDGET = 40;
 // Outfield players each manager picks (Defender/Midfielder/Striker) — the goalie below doesn't count toward this.
 const FPL_SQUAD_SIZE = 4;
 // Points awarded per stat when a manager's picked player records it (captain doubles these).
@@ -542,14 +542,14 @@ function StatCard({ label, value, sub, color, icon, t }) {
   );
 }
 
-function LeaderRow({ rank, name, value, max, color, label, t }) {
+function LeaderRow({ rank, name, value, max, color, label, t, onClick }) {
   const medals = { 1: "🥇", 2: "🥈", 3: "🥉" };
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: rank <= 3 ? `${color}11` : "transparent", borderRadius: 10, borderLeft: rank <= 3 ? `3px solid ${color}` : "3px solid transparent" }}>
+    <div onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: rank <= 3 ? `${color}11` : "transparent", borderRadius: 10, borderLeft: rank <= 3 ? `3px solid ${color}` : "3px solid transparent", cursor: onClick ? "pointer" : "default" }}>
       <div style={{ width: 28, textAlign: "center", fontSize: rank <= 3 ? 18 : 13, color: t.textMuted, fontFamily: "'Bebas Neue', cursive" }}>{medals[rank] || rank}</div>
       <div style={{ flex: 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-          <span style={{ color: t.text, fontWeight: 600, fontSize: 14 }}>{name}</span>
+          <span style={{ color: t.text, fontWeight: 600, fontSize: 14 }}>{name}{onClick ? " 👁" : ""}</span>
           <span style={{ color, fontWeight: 800, fontFamily: "'Bebas Neue', cursive", fontSize: 18 }}>{value} <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 400 }}>{label}</span></span>
         </div>
         <MiniBar value={value} max={max} color={color} t={t} />
@@ -685,6 +685,7 @@ export default function App() {
   const [fplSearchQ, setFplSearchQ] = useState("");
   const [priceEditId, setPriceEditId] = useState(null);
   const [priceEditValue, setPriceEditValue] = useState("");
+  const [viewingTeam, setViewingTeam] = useState(null); // an fpl_teams row being viewed read-only from the leaderboard
 
   useEffect(() => { loadPlayers(); loadMeta(); loadFplData(); }, []);
 
@@ -1714,13 +1715,14 @@ export default function App() {
               )}
 
               <div style={{ background: t.cardBg, borderRadius: 16, padding: 20, border: `1px solid ${t.border}` }}>
-                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: 3, marginBottom: 16, color: "#22c55e" }}>🏆 FPL LEADERBOARD</div>
+                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: 3, marginBottom: 4, color: "#22c55e" }}>🏆 FPL LEADERBOARD</div>
+                {leaderboard.length > 0 && <div style={{ fontSize: 10, color: t.textFaint, marginBottom: 12 }}>Tap a manager to see their squad</div>}
                 {leaderboard.length === 0 ? (
                   <div style={{ fontSize: 12, color: t.textMuted }}>No managers yet — be the first to build a squad.</div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {leaderboard.map((team, i) => (
-                      <LeaderRow key={team.id} rank={i + 1} name={team.managerName} value={team.total_points || 0} max={maxPts} color="#22c55e" label="pts" t={t} />
+                      <LeaderRow key={team.id} rank={i + 1} name={team.managerName} value={team.total_points || 0} max={maxPts} color="#22c55e" label="pts" t={t} onClick={() => setViewingTeam(team)} />
                     ))}
                   </div>
                 )}
@@ -1896,6 +1898,54 @@ export default function App() {
                 </>
               )}
               <button onClick={() => setShowMotmHistory(false)} style={{ marginTop: 18, width: "100%", background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 10, padding: 12, color: t.textDim, cursor: "pointer", fontWeight: 600 }}>Close</button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {viewingTeam && (() => {
+        const managerName = fplManagers.find((m) => m.id === viewingTeam.manager_id)?.name || "Unknown";
+        const squadValue = (viewingTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0);
+        return (
+          <div style={{ position: "fixed", inset: 0, background: t.overlay, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}>
+            <div style={{ background: t.cardBg, border: `1px solid ${t.borderLight}`, borderRadius: 20, padding: 24, width: "100%", maxWidth: 440, maxHeight: "85vh", overflowY: "auto" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1 }}>Manager</div>
+                  <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 22, letterSpacing: 1, color: "#22c55e" }}>{managerName}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1 }}>Points</div>
+                  <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 22, color: "#22c55e" }}>{viewingTeam.total_points || 0}</div>
+                </div>
+              </div>
+              {(viewingTeam.player_ids || []).length === 0 ? (
+                <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "20px 0" }}>This manager hasn't picked a squad yet.</div>
+              ) : (
+                <>
+                  <Pitch>
+                    <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                      <PitchPlayerCard player={FPL_GOALKEEPER} price={null} isCaptain={false} />
+                    </div>
+                    {["Defender", "Midfielder", "Striker"].map((pos) => {
+                      const rowPlayers = (viewingTeam.player_ids || []).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
+                      if (!rowPlayers.length) return null;
+                      return (
+                        <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                          {rowPlayers.map((p) => (
+                            <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={viewingTeam.captain_id === p.id} />
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </Pitch>
+                  {(viewingTeam.player_ids || []).some((id) => !players.find((pl) => pl.id === id)) && (
+                    <div style={{ fontSize: 11, color: t.textGhost, marginTop: 10 }}>Some picked players were removed from the liga.</div>
+                  )}
+                  <div style={{ fontSize: 11, color: t.textFaint, marginTop: 12, textTransform: "uppercase", letterSpacing: 1 }}>Squad value: ₦{squadValue.toFixed(1)}m</div>
+                </>
+              )}
+              <button onClick={() => setViewingTeam(null)} style={{ marginTop: 18, width: "100%", background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 10, padding: 12, color: t.textDim, cursor: "pointer", fontWeight: 600 }}>Close</button>
             </div>
           </div>
         );
