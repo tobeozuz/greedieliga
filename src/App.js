@@ -568,7 +568,7 @@ function LeaderRow({ rank, name, value, max, color, label, t, onClick }) {
       <div style={{ width: 28, textAlign: "center", fontSize: rank <= 3 ? 18 : 13, color: t.textMuted, fontFamily: "'Bebas Neue', cursive" }}>{medals[rank] || rank}</div>
       <div style={{ flex: 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-          <span style={{ color: t.text, fontWeight: 600, fontSize: 14 }}>{name}{onClick ? " 👁" : ""}</span>
+          <span style={{ color: t.text, fontWeight: 600, fontSize: 14 }}>{name}</span>
           <span style={{ color, fontWeight: 800, fontFamily: "'Bebas Neue', cursive", fontSize: 18 }}>{value} <span style={{ fontSize: 10, color: t.textMuted, fontWeight: 400 }}>{label}</span></span>
         </div>
         <MiniBar value={value} max={max} color={color} t={t} />
@@ -1812,31 +1812,39 @@ export default function App() {
                 )}
               </div>
 
-              {isMostSelectedVisible(now) && (() => {
+              {(() => {
+                // Always render the card shell — a card that silently vanishes depending on time
+                // of day or data state is confusing to debug from the outside. Its CONTENT changes
+                // (quiet hours / no squads yet / live picks), but the card itself is always there.
+                const quiet = !isMostSelectedVisible(now);
                 const tally = {};
                 fplTeams.forEach((team) => { (team.player_ids || []).forEach((id) => { tally[id] = (tally[id] || 0) + 1; }); });
                 const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-                if (!entries.length) return null;
-                const topCount = entries[0][1];
+                const topCount = entries.length ? entries[0][1] : 0;
                 const topPicks = entries.filter(([, c]) => c === topCount).map(([id]) => players.find((p) => p.id === id)).filter(Boolean);
-                if (!topPicks.length) return null;
                 const totalManagers = fplTeams.length;
                 const pct = totalManagers ? Math.round((topCount / totalManagers) * 100) : 0;
                 return (
                   <div style={{ background: t.cardBg, borderRadius: 16, padding: 20, border: `1px solid ${t.border}` }}>
                     <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, letterSpacing: 2, marginBottom: 4, color: "#facc15" }}>🎯 MOST SELECTED</div>
                     <div style={{ fontSize: 10, color: t.textFaint, marginBottom: 14 }}>Live — updates as managers save their squads · goes quiet 11pm–7am</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                      {topPicks.map((p) => (
-                        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 12, padding: "10px 14px" }}>
-                          <div style={{ width: 34, height: 34, borderRadius: 8, background: positionColors[p.position], display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 12 }}>{initialsOf(p.name)}</div>
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: 13, color: t.text }}>{p.name}</div>
-                            <div style={{ fontSize: 11, color: t.textMuted }}>{positionEmoji[p.position]} {p.position} · selected by {pct}% of managers</div>
+                    {quiet ? (
+                      <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "10px 0" }}>🌙 Quiet hours — back at 7am.</div>
+                    ) : !topPicks.length ? (
+                      <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "10px 0" }}>No squads picked yet — be the first!</div>
+                    ) : (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                        {topPicks.map((p) => (
+                          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 12, padding: "10px 14px" }}>
+                            <div style={{ width: 34, height: 34, borderRadius: 8, background: positionColors[p.position], display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 12 }}>{initialsOf(p.name)}</div>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: t.text }}>{p.name}</div>
+                              <div style={{ fontSize: 11, color: t.textMuted }}>{positionEmoji[p.position]} {p.position} · selected by {pct}% of managers</div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
