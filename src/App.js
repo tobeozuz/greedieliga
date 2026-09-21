@@ -76,10 +76,6 @@ const FPL_SQUAD_SIZE = 4;
 const FPL_SUB_SIZE = 2;
 const FPL_TOTAL_PICKS = FPL_SQUAD_SIZE + FPL_SUB_SIZE;
 const FPL_SUB_POINT_FACTOR = 1 / 3;
-// Real-FPL-style "sell-on fee": selling a player only banks half of any price rise since you
-// bought them — the rest stays lost, which is what stops budgets from inflating forever as prices climb.
-// A player who's fallen in price since purchase sells for the lower current price, no fee on a loss.
-const FPL_SELL_FEE_RATE = 0.5;
 // Points awarded per stat when a manager's picked player records it (captain doubles these).
 const FPL_POINTS = { goal: 4, assist: 3, cleanSheet: 4 };
 // Every squad gets the same fixed goalkeeper — free, undroppable, no stats tracked for the position,
@@ -96,6 +92,27 @@ function isFplLocked(date) {
   if (!FPL_GAMEDAYS.includes(date.getDay())) return false;
   const hour = date.getHours() + date.getMinutes() / 60;
   return hour >= FPL_LOCK_HOUR && hour < FPL_UNLOCK_HOUR;
+}
+// Free transfers reset once per gameday. A player swap made any time up through a gameday's 8pm
+// unlock counts toward THAT gameday's allowance; once that gameday is done (past 8pm), transfers
+// start counting toward whichever gameday comes next (skipping non-gamedays).
+const FPL_FREE_TRANSFERS_PER_GAMEDAY = 2;
+const FPL_TRANSFER_PENALTY = 5; // points deducted per transfer beyond the free allowance
+function currentTransferWindowKey(date) {
+  const base = new Date(date);
+  base.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 14; i++) {
+    const probe = new Date(base);
+    probe.setDate(base.getDate() + i);
+    if (!FPL_GAMEDAYS.includes(probe.getDay())) continue;
+    if (i === 0) {
+      const hour = date.getHours() + date.getMinutes() / 60;
+      if (hour < FPL_UNLOCK_HOUR) return probe.toDateString();
+      continue; // today's gameday is done, roll to the next one
+    }
+    return probe.toDateString();
+  }
+  return base.toDateString();
 }
 // "Most Selected" is live all day — updates instantly as managers save squads — but goes
 // blank overnight (11pm–7am) once the day's matches are done, same idea as quiet hours.
@@ -134,13 +151,9 @@ function weeklyPriceBump(dGoals, dAssists, dCS, position) {
 function priceOf(player) {
   return player.base_price != null ? player.base_price : 4;
 }
-// Real-FPL-style sell-on fee: a price RISE since purchase only refunds half (rounded down to the
-// nearest ₦0.5m); a price FALL just sells at the lower current price, no extra penalty on a loss.
+// No sell-on fee — selling a player always refunds their full current price, whatever you paid.
 function sellValueOf(purchasePrice, currentPrice) {
-  if (currentPrice <= purchasePrice) return currentPrice;
-  const gain = currentPrice - purchasePrice;
-  const keptGain = Math.floor(gain * FPL_SELL_FEE_RATE * 2) / 2;
-  return purchasePrice + keptGain;
+  return currentPrice;
 }
 
 // ---------- Theme ----------
@@ -750,7 +763,7 @@ export default function App() {
   const [fplDraftCaptain, setFplDraftCaptain] = useState(null);
   const [fplDraftSubs, setFplDraftSubs] = useState([]); // subset of fplDraftPicks marked as substitutes (max FPL_SUB_SIZE)
   const [fplDraftBank, setFplDraftBank] = useState(FPL_BUDGET); // unspent budget during this edit — the buy/sell ledger's running balance
-  const [fplDraftPurchasePrices, setFplDraftPurchasePrices] = useState({}); // playerId -> price paid, for the sell-on fee calc
+  const [fplDraftPurchasePrices, setFplDraftPurchasePrices] = useState({}); // playerId -> price paid, so a kept player's cost never drifts with their live price
   const [fplSearchQ, setFplSearchQ] = useState("");
   const [priceEditId, setPriceEditId] = useState(null);
   const [priceEditValue, setPriceEditValue] = useState("");
@@ -844,7 +857,7 @@ export default function App() {
     try {
       await sbFetch(`players?id=eq.${player.id}`, { method: "DELETE" });
       // Clean up any FPL squads that had this player picked, so nothing dangles. Refund whatever
-      // they'd paid straight back to the bank — this is a forced removal, not a sale, so no sell-on fee.
+      // they'd paid straight back to the bank — this is a forced removal, not a sale.
       const affected = fplTeams.filter((team) => (team.player_ids || []).includes(player.id));
       if (affected.length) {
         await Promise.all(affected.map((team) => {
@@ -1115,7 +1128,7 @@ export default function App() {
     setFplEditing(true);
   }
 
-  // Removing a pick "sells" it at its sell-on-fee-adjusted value; adding one "buys" it at today's
+  // Removing a pick "sells" it back at its current live price; adding one "buys" it at today's
   // live price. Both move the draft bank, same as a real transfer would.
   function toggleFplPick(playerId) {
     if (fplDraftPicks.includes(playerId)) {
@@ -1175,10 +1188,28 @@ export default function App() {
       const captain = fplDraftCaptain && starters.includes(fplDraftCaptain) ? fplDraftCaptain : starters[0];
       const body = { player_ids: fplDraftPicks, sub_ids: fplDraftSubs, captain_id: captain, bank: fplDraftBank, purchase_prices: fplDraftPurchasePrices };
       if (fplTeam) {
-        await sbFetch(`fpl_teams?id=eq.${fplTeam.id}`, { method: "PATCH", body: JSON.stringify({ ...body, updated_at: new Date().toISOString() }) });
-        showToast("Team updated! ✅");
+        // Free transfers reset once per gameday — swapping a player out for a different one beyond
+        // the free allowance costs points immediately, same idea as real FPL's transfer hit.
+        const oldIds = fplTeam.player_ids || [];
+        const transfersThisSave = oldIds.filter((id) => !fplDraftPicks.includes(id)).length;
+        const windowKey = currentTransferWindowKey(now);
+        const priorUsed = fplTeam.transfer_week_key === windowKey ? (fplTeam.transfers_used || 0) : 0;
+        const newUsed = priorUsed + transfersThisSave;
+        const penaltyTransfers = Math.max(0, newUsed - FPL_FREE_TRANSFERS_PER_GAMEDAY) - Math.max(0, priorUsed - FPL_FREE_TRANSFERS_PER_GAMEDAY);
+        const penaltyPoints = penaltyTransfers * FPL_TRANSFER_PENALTY;
+        await sbFetch(`fpl_teams?id=eq.${fplTeam.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            ...body,
+            transfers_used: newUsed,
+            transfer_week_key: windowKey,
+            total_points: (fplTeam.total_points || 0) - penaltyPoints,
+            updated_at: new Date().toISOString(),
+          }),
+        });
+        showToast(penaltyPoints > 0 ? `Team updated — ${penaltyTransfers} extra transfer${penaltyTransfers === 1 ? "" : "s"} cost you ${penaltyPoints} points ⚠️` : "Team updated! ✅");
       } else {
-        await sbFetch("fpl_teams", { method: "POST", body: JSON.stringify({ manager_id: fplManager.id, ...body, total_points: 0 }) });
+        await sbFetch("fpl_teams", { method: "POST", body: JSON.stringify({ manager_id: fplManager.id, ...body, total_points: 0, transfers_used: 0, transfer_week_key: currentTransferWindowKey(now) }) });
         showToast("Team saved! ⚽");
       }
       await loadFplData();
@@ -1682,8 +1713,8 @@ export default function App() {
           const pickablePlayers = [...players]
             .filter((p) => p.name.toLowerCase().includes(fplSearchQ.toLowerCase()))
             .sort((a, b) => priceOf(b) - priceOf(a));
-          // "Squad value" = bank + what you'd get selling everyone right now (sell-on fee applied
-          // to any gains) — the same number real FPL calls Team Value.
+          // "Squad value" = bank + what you'd get selling everyone right now at their current
+          // price — the same number real FPL calls Team Value.
           function teamSellValue(team) {
             const bank = getTeamBank(team);
             const purchasePrices = getTeamPurchasePrices(team);
@@ -1712,7 +1743,7 @@ export default function App() {
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ background: "linear-gradient(135deg, #16a34a11, #0f0f23)", border: "1px solid #16a34a33", borderRadius: 16, padding: "12px 16px", fontSize: 12, color: t.textDim, lineHeight: 1.5 }}>
-                🎮 Build a squad of {FPL_SQUAD_SIZE} starters + {FPL_SUB_SIZE} subs within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Subs cost the same as starters but only earn ⅓ points. Prices are set by the admin and drift a little each week — up OR down — based on that week's performance. Selling a player who's risen in price only banks half the gain (real FPL-style sell-on fee); a player who's dropped just sells at the lower price. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated. Squads lock at 5pm and reopen at 8pm on gamedays (Sun, Mon, Wed, Fri, Sat).
+                🎮 Build a squad of {FPL_SQUAD_SIZE} starters + {FPL_SUB_SIZE} subs within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Subs cost the same as starters but only earn ⅓ points. Prices are set by the admin and drift a little each week — up OR down — based on that week's performance, but a player you already own never costs you more just because their price rose. You get {FPL_FREE_TRANSFERS_PER_GAMEDAY} free transfers per gameday — extra swaps cost {FPL_TRANSFER_PENALTY} points each. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated. Squads lock at 5pm and reopen at 8pm on gamedays (Sun, Mon, Wed, Fri, Sat).
               </div>
 
               {locked && (
@@ -1879,6 +1910,9 @@ export default function App() {
                         <div style={{ fontSize: 11, color: t.textFaint, marginTop: 12, textTransform: "uppercase", letterSpacing: 1 }}>
                           Squad value: ₦{teamSellValue(fplTeam).toFixed(1)}m · Bank: ₦{myTeamBank.toFixed(1)}m
                         </div>
+                        <div style={{ fontSize: 11, color: t.textFaint, marginTop: 4, textTransform: "uppercase", letterSpacing: 1 }}>
+                          Transfers this gameday: {fplTeam.transfer_week_key === currentTransferWindowKey(now) ? (fplTeam.transfers_used || 0) : 0} / {FPL_FREE_TRANSFERS_PER_GAMEDAY} free
+                        </div>
                       </div>
                     ) : (
                       <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 22, textAlign: "center" }}>
@@ -1963,12 +1997,20 @@ export default function App() {
                         const subsIncomplete = !incomplete && fplDraftSubs.length !== FPL_SUB_SIZE;
                         const overBudget = draftRemaining < 0;
                         const blocked = fplSaving || incomplete || subsIncomplete || overBudget || locked;
+                        // Live preview of the transfer-hit math, so the cost is visible before saving.
+                        const oldIds = fplTeam ? (fplTeam.player_ids || []) : [];
+                        const transfersThisSave = fplTeam ? oldIds.filter((id) => !fplDraftPicks.includes(id)).length : 0;
+                        const windowKey = currentTransferWindowKey(now);
+                        const priorUsed = fplTeam && fplTeam.transfer_week_key === windowKey ? (fplTeam.transfers_used || 0) : 0;
+                        const newUsed = priorUsed + transfersThisSave;
+                        const previewPenaltyTransfers = Math.max(0, newUsed - FPL_FREE_TRANSFERS_PER_GAMEDAY) - Math.max(0, priorUsed - FPL_FREE_TRANSFERS_PER_GAMEDAY);
                         let label = "💾 Save Team";
                         if (fplSaving) label = "Saving...";
                         else if (locked) label = "🔒 Locked until 8pm";
                         else if (incomplete) label = `Pick ${FPL_TOTAL_PICKS - fplDraftPicks.length} more`;
                         else if (subsIncomplete) label = `Bench ${FPL_SUB_SIZE - fplDraftSubs.length} more as sub`;
                         else if (overBudget) label = `Over budget by ₦${Math.abs(draftRemaining).toFixed(1)}m`;
+                        else if (previewPenaltyTransfers > 0) label = `💾 Save (−${previewPenaltyTransfers * FPL_TRANSFER_PENALTY} pts)`;
                         return (
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                             {locked && (
@@ -1979,6 +2021,12 @@ export default function App() {
                             )}
                             {overBudget && !incomplete && !locked && (
                               <div style={{ fontSize: 11, color: "#ef4444", textAlign: "center" }}>You're over budget — sell a player to save.</div>
+                            )}
+                            {!incomplete && !subsIncomplete && !overBudget && !locked && (
+                              <div style={{ fontSize: 11, color: previewPenaltyTransfers > 0 ? "#ef4444" : t.textFaint, textAlign: "center" }}>
+                                {transfersThisSave} transfer{transfersThisSave === 1 ? "" : "s"} this save · {Math.min(newUsed, FPL_FREE_TRANSFERS_PER_GAMEDAY)}/{FPL_FREE_TRANSFERS_PER_GAMEDAY} free used this gameday
+                                {previewPenaltyTransfers > 0 ? ` · ${previewPenaltyTransfers} over the limit = −${previewPenaltyTransfers * FPL_TRANSFER_PENALTY} points` : ""}
+                              </div>
                             )}
                             <div style={{ display: "flex", gap: 10 }}>
                               <button onClick={() => setFplEditing(false)} style={{ flex: 1, background: t.toggleBg, border: "none", borderRadius: 10, padding: 13, color: t.textMuted, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
