@@ -66,9 +66,20 @@ const STARMAN = "✍️Starman⭐";
 
 // ---------- FPL ----------
 // Budget per manager, in millions of naira. Edit this one number to rebalance the whole game.
-const FPL_BUDGET = 35;
-// Outfield players each manager picks (Defender/Midfielder/Striker) — the goalie below doesn't count toward this.
+// Raised from ₦35m to ₦50m when substitutes were added, to fit the 2 extra paid slots while
+// staying tighter than the straight ~1.5x-headroom math (₦52.5m) would have allowed.
+const FPL_BUDGET = 50;
+// Outfield starters each manager picks (Defender/Midfielder/Striker) — the goalie below doesn't count toward this.
 const FPL_SQUAD_SIZE = 4;
+// Substitute picks, on top of the starters above — same price as a starter, but only earn a
+// fraction of the points (see FPL_SUB_POINT_FACTOR) since they're bench cover, not a starting XI slot.
+const FPL_SUB_SIZE = 2;
+const FPL_TOTAL_PICKS = FPL_SQUAD_SIZE + FPL_SUB_SIZE;
+const FPL_SUB_POINT_FACTOR = 1 / 3;
+// Real-FPL-style "sell-on fee": selling a player only banks half of any price rise since you
+// bought them — the rest stays lost, which is what stops budgets from inflating forever as prices climb.
+// A player who's fallen in price since purchase sells for the lower current price, no fee on a loss.
+const FPL_SELL_FEE_RATE = 0.5;
 // Points awarded per stat when a manager's picked player records it (captain doubles these).
 const FPL_POINTS = { goal: 4, assist: 3, cleanSheet: 4 };
 // Every squad gets the same fixed goalkeeper — free, undroppable, no stats tracked for the position,
@@ -112,13 +123,24 @@ function seasonReputationPrice(stats) {
   const drift = Math.max(-6, Math.min(6, fplStatForm(stats) * 0.05));
   return Math.round(Math.max(0, Math.min(4 + drift, 20)) * 2) / 2;
 }
-// Used by "Start New Week" — a small, capped nudge (±₦2m) from THIS week's stat delta only.
+// Used by "Start New Week" — a small, capped nudge from THIS week's stat delta only.
+// Goes up to +₦2m for a strong week, but also nudges DOWN ₦1m for a totally quiet one (no goals,
+// assists, or clean sheets that week) — prices now move both directions, same as real FPL.
 function weeklyPriceBump(dGoals, dAssists, dCS, position) {
   const formPts = dGoals * 3 + dAssists * 2 + (position === "Defender" ? dCS * 2 : 0);
-  return Math.max(-2, Math.min(2, formPts * 0.15));
+  if (formPts > 0) return Math.min(2, formPts * 0.15);
+  return -1;
 }
 function priceOf(player) {
   return player.base_price != null ? player.base_price : 4;
+}
+// Real-FPL-style sell-on fee: a price RISE since purchase only refunds half (rounded down to the
+// nearest ₦0.5m); a price FALL just sells at the lower current price, no extra penalty on a loss.
+function sellValueOf(purchasePrice, currentPrice) {
+  if (currentPrice <= purchasePrice) return currentPrice;
+  const gain = currentPrice - purchasePrice;
+  const keptGain = Math.floor(gain * FPL_SELL_FEE_RATE * 2) / 2;
+  return purchasePrice + keptGain;
 }
 
 // ---------- Theme ----------
@@ -587,12 +609,12 @@ function initialsOf(name) {
 }
 // A shirt-style player card for the FPL pitch view — badge for price, optional "C" for captain,
 // optional "✕" to remove (edit mode), tap the shirt to make them captain (edit mode).
-function PitchPlayerCard({ player, price, points, isCaptain, onRemove, onMakeCaptain }) {
+function PitchPlayerCard({ player, price, points, isCaptain, isSub, onRemove, onMakeCaptain, onToggleSub }) {
   const isGoalkeeper = player.position === "Goalkeeper";
   const color = isGoalkeeper ? GOALKEEPER_STYLE.color : positionColors[player.position];
   const badgeText = isGoalkeeper ? "GK" : initialsOf(player.name);
   return (
-    <div style={{ position: "relative", width: 88, display: "flex", flexDirection: "column", alignItems: "center" }}>
+    <div style={{ position: "relative", width: 88, display: "flex", flexDirection: "column", alignItems: "center", opacity: isSub ? 0.72 : 1 }}>
       <div style={{ position: "absolute", top: -8, left: -4, background: "#0d0d2b", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "2px 6px", fontSize: 10, fontWeight: 800, color: "#fff", zIndex: 2, whiteSpace: "nowrap" }}>
         {price == null ? "FIXED" : `₦${price}m`}
       </div>
@@ -604,7 +626,7 @@ function PitchPlayerCard({ player, price, points, isCaptain, onRemove, onMakeCap
         style={{
           width: 62, height: 62, borderRadius: "14px 14px 6px 6px",
           background: `linear-gradient(160deg, ${color}, ${color}aa)`,
-          border: isCaptain ? "2px solid #facc15" : "2px solid rgba(255,255,255,0.4)",
+          border: isCaptain ? "2px solid #facc15" : isSub ? "2px dashed rgba(255,255,255,0.5)" : "2px solid rgba(255,255,255,0.4)",
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 18, fontWeight: 800, color: "#fff", letterSpacing: 0.5,
           marginTop: 10, boxShadow: "0 4px 10px rgba(0,0,0,0.35)",
@@ -616,10 +638,20 @@ function PitchPlayerCard({ player, price, points, isCaptain, onRemove, onMakeCap
       <div style={{ background: "#ffffff", color: "#111", borderRadius: 6, padding: "3px 6px", fontSize: 10, fontWeight: 700, marginTop: 6, maxWidth: 84, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {player.name}{isCaptain ? " (C)" : ""}
       </div>
+      {isSub && (
+        <div style={{ background: "#94a3b833", color: "#cbd5e1", borderRadius: 6, padding: "2px 6px", fontSize: 9, fontWeight: 700, marginTop: 4, letterSpacing: 0.5 }}>
+          SUB · ⅓ PTS
+        </div>
+      )}
       {points != null && (
         <div style={{ background: "#16a34a", color: "#fff", borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 800, marginTop: 4 }}>
           {points} pt{points === 1 ? "" : "s"}
         </div>
+      )}
+      {onToggleSub && (
+        <button onClick={onToggleSub} style={{ marginTop: 4, background: "transparent", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 6, color: "#fff", fontSize: 9, cursor: "pointer", padding: "3px 6px" }}>
+          {isSub ? "↑ Start" : "↓ Bench"}
+        </button>
       )}
     </div>
   );
@@ -716,6 +748,9 @@ export default function App() {
   const [fplEditing, setFplEditing] = useState(false);
   const [fplDraftPicks, setFplDraftPicks] = useState([]);
   const [fplDraftCaptain, setFplDraftCaptain] = useState(null);
+  const [fplDraftSubs, setFplDraftSubs] = useState([]); // subset of fplDraftPicks marked as substitutes (max FPL_SUB_SIZE)
+  const [fplDraftBank, setFplDraftBank] = useState(FPL_BUDGET); // unspent budget during this edit — the buy/sell ledger's running balance
+  const [fplDraftPurchasePrices, setFplDraftPurchasePrices] = useState({}); // playerId -> price paid, for the sell-on fee calc
   const [fplSearchQ, setFplSearchQ] = useState("");
   const [priceEditId, setPriceEditId] = useState(null);
   const [priceEditValue, setPriceEditValue] = useState("");
@@ -777,6 +812,21 @@ export default function App() {
     }
   }
 
+  // A team's unspent budget. Persisted going forward once they save — but a squad that was
+  // saved before the buy/sell ledger existed has no `bank` yet, so treat it as if it had just
+  // bought its current picks today at today's prices (a one-time, on-the-fly migration).
+  function getTeamBank(team) {
+    if (team.bank != null) return team.bank;
+    const spent = (team.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0);
+    return FPL_BUDGET - spent;
+  }
+  function getTeamPurchasePrices(team) {
+    if (team.purchase_prices && Object.keys(team.purchase_prices).length) return team.purchase_prices;
+    const map = {};
+    (team.player_ids || []).forEach((id) => { const p = players.find((pl) => pl.id === id); if (p) map[id] = priceOf(p); });
+    return map;
+  }
+
   function showToast(msg, type = "success") {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2500);
@@ -793,16 +843,26 @@ export default function App() {
     setSaving(true);
     try {
       await sbFetch(`players?id=eq.${player.id}`, { method: "DELETE" });
-      // Clean up any FPL squads that had this player picked, so nothing dangles.
+      // Clean up any FPL squads that had this player picked, so nothing dangles. Refund whatever
+      // they'd paid straight back to the bank — this is a forced removal, not a sale, so no sell-on fee.
       const affected = fplTeams.filter((team) => (team.player_ids || []).includes(player.id));
       if (affected.length) {
-        await Promise.all(affected.map((team) => sbFetch(`fpl_teams?id=eq.${team.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            player_ids: (team.player_ids || []).filter((id) => id !== player.id),
-            captain_id: team.captain_id === player.id ? null : team.captain_id,
-          }),
-        })));
+        await Promise.all(affected.map((team) => {
+          const purchasePrices = getTeamPurchasePrices(team);
+          const refund = purchasePrices[player.id] != null ? purchasePrices[player.id] : priceOf(player);
+          const nextPurchasePrices = { ...purchasePrices };
+          delete nextPurchasePrices[player.id];
+          return sbFetch(`fpl_teams?id=eq.${team.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              player_ids: (team.player_ids || []).filter((id) => id !== player.id),
+              sub_ids: (team.sub_ids || []).filter((id) => id !== player.id),
+              captain_id: team.captain_id === player.id ? null : team.captain_id,
+              bank: getTeamBank(team) + refund,
+              purchase_prices: nextPurchasePrices,
+            }),
+          });
+        }));
         await loadFplData();
       }
       await loadPlayers();
@@ -833,7 +893,8 @@ export default function App() {
       if (!affected.length) return;
       await Promise.all(affected.map((team) => {
         const isCaptain = team.captain_id === playerId;
-        const teamDelta = pointsDelta * (isCaptain ? 2 : 1);
+        const isSub = (team.sub_ids || []).includes(playerId);
+        const teamDelta = Math.round(pointsDelta * (isSub ? FPL_SUB_POINT_FACTOR : 1) * (isCaptain ? 2 : 1));
         const newTotal = (team.total_points || 0) + teamDelta;
         // Per-player ledger so managers can see how each squad member contributed,
         // not just the team's combined total.
@@ -970,9 +1031,12 @@ export default function App() {
       await setMeta("current_potw", null);
       setLastSnapshot(null);
       setPotw(null);
-      // Fresh FPL competition too — squads stay intact, points reset to zero.
+      // Fresh FPL competition too — squads stay intact, points reset to zero. Prices just got
+      // reseeded above, so the buy/sell ledger resets too (null bank / empty purchase_prices is
+      // read as "as if bought fresh today" — see getTeamBank) rather than carrying stale figures
+      // from last season's price scale into the new one.
       if (fplTeams.length) {
-        await Promise.all(fplTeams.map((team) => sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "PATCH", body: JSON.stringify({ total_points: 0, player_points: {} }) })));
+        await Promise.all(fplTeams.map((team) => sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "PATCH", body: JSON.stringify({ total_points: 0, player_points: {}, bank: null, purchase_prices: {} }) })));
         await loadFplData();
       }
       await loadPlayers();
@@ -1038,31 +1102,53 @@ export default function App() {
     if (fplTeam) {
       setFplDraftPicks([...(fplTeam.player_ids || [])]);
       setFplDraftCaptain(fplTeam.captain_id || null);
+      setFplDraftSubs([...(fplTeam.sub_ids || [])]);
+      setFplDraftBank(getTeamBank(fplTeam));
+      setFplDraftPurchasePrices({ ...getTeamPurchasePrices(fplTeam) });
     } else {
       setFplDraftPicks([]);
       setFplDraftCaptain(null);
+      setFplDraftSubs([]);
+      setFplDraftBank(FPL_BUDGET);
+      setFplDraftPurchasePrices({});
     }
     setFplEditing(true);
   }
 
-  function fplDraftSpend() {
-    return fplDraftPicks.reduce((sum, id) => {
-      const p = players.find((pl) => pl.id === id);
-      return sum + (p ? priceOf(p) : 0);
-    }, 0);
-  }
-
+  // Removing a pick "sells" it at its sell-on-fee-adjusted value; adding one "buys" it at today's
+  // live price. Both move the draft bank, same as a real transfer would.
   function toggleFplPick(playerId) {
     if (fplDraftPicks.includes(playerId)) {
+      const player = players.find((p) => p.id === playerId);
+      const purchasePrice = fplDraftPurchasePrices[playerId];
+      const sellPrice = player ? (purchasePrice != null ? sellValueOf(purchasePrice, priceOf(player)) : priceOf(player)) : 0;
       setFplDraftPicks(fplDraftPicks.filter((id) => id !== playerId));
+      setFplDraftSubs(fplDraftSubs.filter((id) => id !== playerId));
       if (fplDraftCaptain === playerId) setFplDraftCaptain(null);
+      setFplDraftBank(fplDraftBank + sellPrice);
+      setFplDraftPurchasePrices((prev) => { const next = { ...prev }; delete next[playerId]; return next; });
       return;
     }
-    if (fplDraftPicks.length >= FPL_SQUAD_SIZE) return;
+    if (fplDraftPicks.length >= FPL_TOTAL_PICKS) return;
     const player = players.find((p) => p.id === playerId);
     if (!player) return;
-    if (fplDraftSpend() + priceOf(player) > FPL_BUDGET) return;
+    const cost = priceOf(player);
+    if (fplDraftBank - cost < 0) return;
     setFplDraftPicks([...fplDraftPicks, playerId]);
+    setFplDraftBank(fplDraftBank - cost);
+    setFplDraftPurchasePrices((prev) => ({ ...prev, [playerId]: cost }));
+  }
+
+  // Moves a pick between the starting XI and the bench. Captain must be a starter, so benching
+  // the current captain clears the armband rather than leaving it on a sub.
+  function toggleSubStatus(playerId) {
+    if (fplDraftSubs.includes(playerId)) {
+      setFplDraftSubs(fplDraftSubs.filter((id) => id !== playerId));
+      return;
+    }
+    if (fplDraftSubs.length >= FPL_SUB_SIZE) return;
+    setFplDraftSubs([...fplDraftSubs, playerId]);
+    if (fplDraftCaptain === playerId) setFplDraftCaptain(null);
   }
 
   async function saveFplTeam() {
@@ -1071,23 +1157,28 @@ export default function App() {
       showToast(`Squads are locked until 8:00pm on gamedays. Try again after 8pm.`, "error");
       return;
     }
-    if (fplDraftPicks.length !== FPL_SQUAD_SIZE) {
-      showToast(`Pick exactly ${FPL_SQUAD_SIZE} players before saving.`, "error");
+    if (fplDraftPicks.length !== FPL_TOTAL_PICKS) {
+      showToast(`Pick exactly ${FPL_TOTAL_PICKS} players (${FPL_SQUAD_SIZE} starters + ${FPL_SUB_SIZE} subs) before saving.`, "error");
       return;
     }
-    const spend = fplDraftSpend();
-    if (spend > FPL_BUDGET) {
-      showToast(`Over budget by ₦${(spend - FPL_BUDGET).toFixed(1)}m — swap out a player before saving.`, "error");
+    if (fplDraftSubs.length !== FPL_SUB_SIZE) {
+      showToast(`Bench exactly ${FPL_SUB_SIZE} of your picks as substitutes before saving.`, "error");
+      return;
+    }
+    if (fplDraftBank < 0) {
+      showToast(`Over budget by ₦${Math.abs(fplDraftBank).toFixed(1)}m — sell a player before saving.`, "error");
       return;
     }
     setFplSaving(true);
     try {
-      const captain = fplDraftCaptain && fplDraftPicks.includes(fplDraftCaptain) ? fplDraftCaptain : fplDraftPicks[0];
+      const starters = fplDraftPicks.filter((id) => !fplDraftSubs.includes(id));
+      const captain = fplDraftCaptain && starters.includes(fplDraftCaptain) ? fplDraftCaptain : starters[0];
+      const body = { player_ids: fplDraftPicks, sub_ids: fplDraftSubs, captain_id: captain, bank: fplDraftBank, purchase_prices: fplDraftPurchasePrices };
       if (fplTeam) {
-        await sbFetch(`fpl_teams?id=eq.${fplTeam.id}`, { method: "PATCH", body: JSON.stringify({ player_ids: fplDraftPicks, captain_id: captain, updated_at: new Date().toISOString() }) });
+        await sbFetch(`fpl_teams?id=eq.${fplTeam.id}`, { method: "PATCH", body: JSON.stringify({ ...body, updated_at: new Date().toISOString() }) });
         showToast("Team updated! ✅");
       } else {
-        await sbFetch("fpl_teams", { method: "POST", body: JSON.stringify({ manager_id: fplManager.id, player_ids: fplDraftPicks, captain_id: captain, total_points: 0 }) });
+        await sbFetch("fpl_teams", { method: "POST", body: JSON.stringify({ manager_id: fplManager.id, ...body, total_points: 0 }) });
         showToast("Team saved! ⚽");
       }
       await loadFplData();
@@ -1587,29 +1678,41 @@ export default function App() {
             .map((team) => ({ ...team, managerName: fplManagers.find((m) => m.id === team.manager_id)?.name || "Unknown" }))
             .sort((a, b) => (b.total_points || 0) - (a.total_points || 0));
           const maxPts = Math.max(...leaderboard.map((t2) => t2.total_points || 0), 1);
-          const draftSpend = fplDraftSpend();
-          const draftRemaining = FPL_BUDGET - draftSpend;
+          const draftRemaining = fplDraftBank;
           const pickablePlayers = [...players]
             .filter((p) => p.name.toLowerCase().includes(fplSearchQ.toLowerCase()))
             .sort((a, b) => priceOf(b) - priceOf(a));
-          // A squad saved under an older, higher budget can end up over the current one
-          // (e.g. the budget gets lowered later) — flag it so the manager has to fix it.
-          const myTeamValue = fplTeam ? (fplTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0) : 0;
-          const myTeamOverBudget = !!fplTeam && myTeamValue > FPL_BUDGET;
+          // "Squad value" = bank + what you'd get selling everyone right now (sell-on fee applied
+          // to any gains) — the same number real FPL calls Team Value.
+          function teamSellValue(team) {
+            const bank = getTeamBank(team);
+            const purchasePrices = getTeamPurchasePrices(team);
+            const held = (team.player_ids || []).reduce((sum, id) => {
+              const p = players.find((pl) => pl.id === id);
+              if (!p) return sum;
+              const pp = purchasePrices[id];
+              return sum + (pp != null ? sellValueOf(pp, priceOf(p)) : priceOf(p));
+            }, 0);
+            return bank + held;
+          }
+          const myTeamBank = fplTeam ? getTeamBank(fplTeam) : FPL_BUDGET;
+          // Over budget can now only really happen if the admin lowers FPL_BUDGET below what's
+          // already committed — kept players are locked in at their purchase price, not live price.
+          const myTeamOverBudget = !!fplTeam && myTeamBank < 0;
+          // Squads saved before substitutes existed only have the old 4 starters — nudge them to
+          // add the 2 new sub slots rather than blocking them outright.
+          const myTeamIncomplete = !!fplTeam && !myTeamOverBudget && (fplTeam.player_ids || []).length < FPL_TOTAL_PICKS;
           const locked = isFplLocked(now);
           // Squads saved under an older, higher budget (before a cut) that are still over the
           // current one — admin can clear these off the leaderboard instead of waiting on the manager.
           const overBudgetTeams = leaderboard
-            .map((team) => ({
-              ...team,
-              value: (team.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0),
-            }))
-            .filter((team) => team.value > FPL_BUDGET);
+            .map((team) => ({ ...team, value: -getTeamBank(team) + FPL_BUDGET })) // = what they've actually got committed
+            .filter((team) => getTeamBank(team) < 0);
 
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ background: "linear-gradient(135deg, #16a34a11, #0f0f23)", border: "1px solid #16a34a33", borderRadius: 16, padding: "12px 16px", fontSize: 12, color: t.textDim, lineHeight: 1.5 }}>
-                🎮 Build a {FPL_SQUAD_SIZE}-player squad within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Prices are set by the admin and only move once a week, when a new week is started, based on that week's performance. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated. Squads lock at 5pm and reopen at 8pm on gamedays (Sun, Mon, Wed, Fri, Sat).
+                🎮 Build a squad of {FPL_SQUAD_SIZE} starters + {FPL_SUB_SIZE} subs within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Subs cost the same as starters but only earn ⅓ points. Prices are set by the admin and drift a little each week — up OR down — based on that week's performance. Selling a player who's risen in price only banks half the gain (real FPL-style sell-on fee); a player who's dropped just sells at the lower price. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated. Squads lock at 5pm and reopen at 8pm on gamedays (Sun, Mon, Wed, Fri, Sat).
               </div>
 
               {locked && (
@@ -1621,7 +1724,7 @@ export default function App() {
               {isAdmin && (
                 <div style={{ background: t.cardBg, border: "1px solid #f59e0b55", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
                   <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: "#f59e0b" }}>⚙️ ADMIN · PLAYER VALUES</div>
-                  <div style={{ fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>This is each player's current price, right now — set it to whatever's fair. It stays exactly what you set until you either change it again or hit "Start New Week", which bumps every player a small, capped amount based on that week's performance only. Clear the field and save to go back to the default ₦4m.</div>
+                  <div style={{ fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>This is each player's current price, right now — set it to whatever's fair. It stays exactly what you set until you either change it again or hit "Start New Week", which nudges every player up to ₦2m up for a strong week or ₦1m down for a totally quiet one, based on that week's performance only. Clear the field and save to go back to the default ₦4m.</div>
                   <div style={{ maxHeight: 340, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 12 }}>
                     {[...players].sort((a, b) => priceOf(b) - priceOf(a)).map((p) => {
                       const hasCustomBase = p.base_price != null;
@@ -1699,14 +1802,14 @@ export default function App() {
                       <div style={{ background: t.cardBg, border: "2px solid #ef4444", borderRadius: 16, padding: 18 }}>
                         <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: "#ef4444", marginBottom: 10 }}>⚠️ SQUAD OVER BUDGET</div>
                         <div style={{ fontSize: 13, color: t.textDim, lineHeight: 1.6, marginBottom: 14 }}>
-                          The budget is now ₦{FPL_BUDGET}m, but your squad is worth ₦{myTeamValue.toFixed(1)}m — ₦{(myTeamValue - FPL_BUDGET).toFixed(1)}m over. You won't be able to do anything else here until you edit your team and bring it back within budget.
+                          The budget is now ₦{FPL_BUDGET}m, but your squad has ₦{Math.abs(myTeamBank).toFixed(1)}m more committed than that. You won't be able to do anything else here until you edit your team and bring it back within budget.
                         </div>
                         <Pitch>
                           <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
                             <PitchPlayerCard player={FPL_GOALKEEPER} price={null} isCaptain={false} />
                           </div>
                           {["Defender", "Midfielder", "Striker"].map((pos) => {
-                            const rowPlayers = (fplTeam.player_ids || []).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
+                            const rowPlayers = (fplTeam.player_ids || []).filter((id) => !(fplTeam.sub_ids || []).includes(id)).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
                             if (!rowPlayers.length) return null;
                             return (
                               <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
@@ -1716,6 +1819,16 @@ export default function App() {
                               </div>
                             );
                           })}
+                          {(fplTeam.sub_ids || []).length > 0 && (
+                            <div>
+                              <div style={{ textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Substitutes</div>
+                              <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                                {(fplTeam.sub_ids || []).map((id) => players.find((pl) => pl.id === id)).filter(Boolean).map((p) => (
+                                  <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} points={(fplTeam.player_points || {})[p.id] || 0} isCaptain={fplTeam.captain_id === p.id} isSub />
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </Pitch>
                         {locked ? (
                           <div style={{ marginTop: 14, fontSize: 12, color: "#ef4444", textAlign: "center" }}>🔒 Locked until 8:00pm — you'll be able to fix this once squads reopen.</div>
@@ -1729,12 +1842,17 @@ export default function App() {
                           <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: t.textDim }}>MY SQUAD</div>
                           <button onClick={startFplBuild} disabled={locked} style={{ background: t.toggleBg, border: `1px solid ${t.toggleBorder}`, borderRadius: 8, padding: "7px 12px", color: t.textDim, cursor: locked ? "not-allowed" : "pointer", fontSize: 12, opacity: locked ? 0.5 : 1 }}>{locked ? "🔒 Locked" : "✏️ Edit Team"}</button>
                         </div>
+                        {myTeamIncomplete && (
+                          <div style={{ background: "#f59e0b18", border: "1px solid #f59e0b55", borderRadius: 10, padding: "10px 12px", fontSize: 12, color: "#f59e0b", marginBottom: 14 }}>
+                            🪑 New: every squad now gets {FPL_SUB_SIZE} substitutes (same price, ⅓ points). Edit your team to add yours.
+                          </div>
+                        )}
                         <Pitch>
                           <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
                             <PitchPlayerCard player={FPL_GOALKEEPER} price={null} isCaptain={false} />
                           </div>
                           {["Defender", "Midfielder", "Striker"].map((pos) => {
-                            const rowPlayers = (fplTeam.player_ids || []).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
+                            const rowPlayers = (fplTeam.player_ids || []).filter((id) => !(fplTeam.sub_ids || []).includes(id)).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
                             if (!rowPlayers.length) return null;
                             return (
                               <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
@@ -1744,12 +1862,22 @@ export default function App() {
                               </div>
                             );
                           })}
+                          {(fplTeam.sub_ids || []).length > 0 && (
+                            <div>
+                              <div style={{ textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Substitutes</div>
+                              <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                                {(fplTeam.sub_ids || []).map((id) => players.find((pl) => pl.id === id)).filter(Boolean).map((p) => (
+                                  <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} points={(fplTeam.player_points || {})[p.id] || 0} isCaptain={fplTeam.captain_id === p.id} isSub />
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </Pitch>
                         {(fplTeam.player_ids || []).some((id) => !players.find((pl) => pl.id === id)) && (
                           <div style={{ fontSize: 11, color: t.textGhost, marginTop: 10 }}>Some picked players were removed from the liga.</div>
                         )}
                         <div style={{ fontSize: 11, color: t.textFaint, marginTop: 12, textTransform: "uppercase", letterSpacing: 1 }}>
-                          Squad value: ₦{myTeamValue.toFixed(1)}m
+                          Squad value: ₦{teamSellValue(fplTeam).toFixed(1)}m · Bank: ₦{myTeamBank.toFixed(1)}m
                         </div>
                       </div>
                     ) : (
@@ -1763,8 +1891,13 @@ export default function App() {
                     <div style={{ background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
                       <div style={{ display: "flex", alignItems: "stretch", justifyContent: "center", gap: 16 }}>
                         <div style={{ textAlign: "center" }}>
-                          <div style={{ background: "#16a34a22", border: "1px solid #16a34a55", borderRadius: 10, padding: "8px 18px", fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: "#22c55e" }}>{fplDraftPicks.length} / {FPL_SQUAD_SIZE}</div>
+                          <div style={{ background: "#16a34a22", border: "1px solid #16a34a55", borderRadius: 10, padding: "8px 18px", fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: "#22c55e" }}>{fplDraftPicks.length} / {FPL_TOTAL_PICKS}</div>
                           <div style={{ fontSize: 10, color: t.textMuted, marginTop: 4, textTransform: "uppercase", letterSpacing: 1 }}>Players selected</div>
+                        </div>
+                        <div style={{ width: 1, background: t.border }} />
+                        <div style={{ textAlign: "center" }}>
+                          <div style={{ background: "#94a3b822", border: "1px solid #94a3b855", borderRadius: 10, padding: "8px 18px", fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: "#cbd5e1" }}>{fplDraftSubs.length} / {FPL_SUB_SIZE}</div>
+                          <div style={{ fontSize: 10, color: t.textMuted, marginTop: 4, textTransform: "uppercase", letterSpacing: 1 }}>Benched</div>
                         </div>
                         <div style={{ width: 1, background: t.border }} />
                         <div style={{ textAlign: "center" }}>
@@ -1778,19 +1911,29 @@ export default function App() {
                           <PitchPlayerCard player={FPL_GOALKEEPER} price={null} isCaptain={false} />
                         </div>
                         {["Defender", "Midfielder", "Striker"].map((pos) => {
-                          const rowPlayers = fplDraftPicks.map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
+                          const rowPlayers = fplDraftPicks.filter((id) => !fplDraftSubs.includes(id)).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
                           if (!rowPlayers.length) return null;
                           return (
                             <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
                               {rowPlayers.map((p) => (
-                                <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={fplDraftCaptain === p.id} onRemove={() => toggleFplPick(p.id)} onMakeCaptain={() => setFplDraftCaptain(p.id)} />
+                                <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={fplDraftCaptain === p.id} onRemove={() => toggleFplPick(p.id)} onMakeCaptain={() => setFplDraftCaptain(p.id)} onToggleSub={() => toggleSubStatus(p.id)} />
                               ))}
                             </div>
                           );
                         })}
+                        {fplDraftSubs.length > 0 && (
+                          <div>
+                            <div style={{ textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Substitutes</div>
+                            <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                              {fplDraftSubs.map((id) => players.find((pl) => pl.id === id)).filter(Boolean).map((p) => (
+                                <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} isCaptain={false} isSub onRemove={() => toggleFplPick(p.id)} onToggleSub={() => toggleSubStatus(p.id)} />
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </Pitch>
                       <div style={{ fontSize: 10, color: t.textFaint, textAlign: "center" }}>
-                        {fplDraftPicks.length > 0 ? "Tap a shirt to make them captain (2× points) · ✕ to remove" : "Tap players below to add them to your pitch."}
+                        {fplDraftPicks.length > 0 ? `Tap a shirt to make them captain (2× points) · Bench/Start to set your ${FPL_SUB_SIZE} subs · ✕ to sell` : "Tap players below to add them to your pitch."}
                       </div>
 
                       <input placeholder="🔍 Search players..." value={fplSearchQ} onChange={(e) => setFplSearchQ(e.target.value)} style={{ background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 10, padding: "10px 14px", color: t.text, fontSize: 13 }} />
@@ -1799,7 +1942,7 @@ export default function App() {
                         {pickablePlayers.map((p) => {
                           const picked = fplDraftPicks.includes(p.id);
                           const price = priceOf(p);
-                          const disabled = !picked && (fplDraftPicks.length >= FPL_SQUAD_SIZE || draftSpend + price > FPL_BUDGET);
+                          const disabled = !picked && (fplDraftPicks.length >= FPL_TOTAL_PICKS || draftRemaining - price < 0);
                           return (
                             <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: `1px solid ${t.rowBorder}`, opacity: disabled ? 0.4 : 1 }}>
                               <div style={{ flex: 1 }}>
@@ -1816,21 +1959,26 @@ export default function App() {
                       </div>
 
                       {(() => {
-                        const incomplete = fplDraftPicks.length !== FPL_SQUAD_SIZE;
+                        const incomplete = fplDraftPicks.length !== FPL_TOTAL_PICKS;
+                        const subsIncomplete = !incomplete && fplDraftSubs.length !== FPL_SUB_SIZE;
                         const overBudget = draftRemaining < 0;
-                        const blocked = fplSaving || incomplete || overBudget || locked;
+                        const blocked = fplSaving || incomplete || subsIncomplete || overBudget || locked;
                         let label = "💾 Save Team";
                         if (fplSaving) label = "Saving...";
                         else if (locked) label = "🔒 Locked until 8pm";
-                        else if (incomplete) label = `Pick ${FPL_SQUAD_SIZE - fplDraftPicks.length} more`;
+                        else if (incomplete) label = `Pick ${FPL_TOTAL_PICKS - fplDraftPicks.length} more`;
+                        else if (subsIncomplete) label = `Bench ${FPL_SUB_SIZE - fplDraftSubs.length} more as sub`;
                         else if (overBudget) label = `Over budget by ₦${Math.abs(draftRemaining).toFixed(1)}m`;
                         return (
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                             {locked && (
                               <div style={{ fontSize: 11, color: "#ef4444", textAlign: "center" }}>Squads are locked for gameday — you can't save until 8:00pm. Feel free to keep planning, just Cancel for now.</div>
                             )}
+                            {subsIncomplete && !locked && (
+                              <div style={{ fontSize: 11, color: "#f59e0b", textAlign: "center" }}>Tap "↓ Bench" on {FPL_SUB_SIZE - fplDraftSubs.length} more player{FPL_SUB_SIZE - fplDraftSubs.length === 1 ? "" : "s"} to set your subs.</div>
+                            )}
                             {overBudget && !incomplete && !locked && (
-                              <div style={{ fontSize: 11, color: "#ef4444", textAlign: "center" }}>You're over budget — remove or swap a player to save.</div>
+                              <div style={{ fontSize: 11, color: "#ef4444", textAlign: "center" }}>You're over budget — sell a player to save.</div>
                             )}
                             <div style={{ display: "flex", gap: 10 }}>
                               <button onClick={() => setFplEditing(false)} style={{ flex: 1, background: t.toggleBg, border: "none", borderRadius: 10, padding: 13, color: t.textMuted, cursor: "pointer", fontWeight: 600 }}>Cancel</button>
@@ -2134,7 +2282,13 @@ export default function App() {
 
       {viewingTeam && (() => {
         const managerName = fplManagers.find((m) => m.id === viewingTeam.manager_id)?.name || "Unknown";
-        const squadValue = (viewingTeam.player_ids || []).reduce((sum, id) => { const p = players.find((pl) => pl.id === id); return sum + (p ? priceOf(p) : 0); }, 0);
+        const viewingPurchasePrices = getTeamPurchasePrices(viewingTeam);
+        const squadValue = getTeamBank(viewingTeam) + (viewingTeam.player_ids || []).reduce((sum, id) => {
+          const p = players.find((pl) => pl.id === id);
+          if (!p) return sum;
+          const pp = viewingPurchasePrices[id];
+          return sum + (pp != null ? sellValueOf(pp, priceOf(p)) : priceOf(p));
+        }, 0);
         return (
           <div style={{ position: "fixed", inset: 0, background: t.overlay, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}>
             <div style={{ background: t.cardBg, border: `1px solid ${t.borderLight}`, borderRadius: 20, padding: 24, width: "100%", maxWidth: 440, maxHeight: "85vh", overflowY: "auto" }}>
@@ -2157,7 +2311,7 @@ export default function App() {
                       <PitchPlayerCard player={FPL_GOALKEEPER} price={null} isCaptain={false} />
                     </div>
                     {["Defender", "Midfielder", "Striker"].map((pos) => {
-                      const rowPlayers = (viewingTeam.player_ids || []).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
+                      const rowPlayers = (viewingTeam.player_ids || []).filter((id) => !(viewingTeam.sub_ids || []).includes(id)).map((id) => players.find((pl) => pl.id === id)).filter((p) => p && p.position === pos);
                       if (!rowPlayers.length) return null;
                       return (
                         <div key={pos} style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
@@ -2167,6 +2321,16 @@ export default function App() {
                         </div>
                       );
                     })}
+                    {(viewingTeam.sub_ids || []).length > 0 && (
+                      <div>
+                        <div style={{ textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Substitutes</div>
+                        <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                          {(viewingTeam.sub_ids || []).map((id) => players.find((pl) => pl.id === id)).filter(Boolean).map((p) => (
+                            <PitchPlayerCard key={p.id} player={p} price={priceOf(p)} points={(viewingTeam.player_points || {})[p.id] || 0} isCaptain={viewingTeam.captain_id === p.id} isSub />
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </Pitch>
                   {(viewingTeam.player_ids || []).some((id) => !players.find((pl) => pl.id === id)) && (
                     <div style={{ fontSize: 11, color: t.textGhost, marginTop: 10 }}>Some picked players were removed from the liga.</div>
