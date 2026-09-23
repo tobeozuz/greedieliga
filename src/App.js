@@ -86,7 +86,7 @@ const GOALKEEPER_STYLE = { color: "#94a3b8", emoji: "🧤" };
 // reopen at 8:00pm — no building or editing during that window, same as real FPL's deadline.
 // getDay(): 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat.
 const FPL_GAMEDAYS = [0, 1, 3, 5, 6]; // Sunday, Monday, Wednesday, Friday, Saturday
-const FPL_LOCK_HOUR = 17; // 5:00pm
+const FPL_LOCK_HOUR = 17.5; // 5:00pm
 const FPL_UNLOCK_HOUR = 20; // 8:00pm
 function isFplLocked(date) {
   if (!FPL_GAMEDAYS.includes(date.getDay())) return false;
