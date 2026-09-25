@@ -82,11 +82,11 @@ const FPL_POINTS = { goal: 4, assist: 3, cleanSheet: 4 };
 // shown purely so the pitch reads like a real lineup with a keeper at the back.
 const FPL_GOALKEEPER = { name: "Goalkeeper", position: "Goalkeeper" };
 const GOALKEEPER_STYLE = { color: "#94a3b8", emoji: "🧤" };
-// Squad lock window, in the viewer's own local time. On a gameday, squads lock at 5:00pm and
+// Squad lock window, in the viewer's own local time. On a gameday, squads lock at 5:30pm and
 // reopen at 8:00pm — no building or editing during that window, same as real FPL's deadline.
 // getDay(): 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat.
 const FPL_GAMEDAYS = [0, 1, 3, 5, 6]; // Sunday, Monday, Wednesday, Friday, Saturday
-const FPL_LOCK_HOUR = 17.5; // 5:00pm
+const FPL_LOCK_HOUR = 17.5; // 5:30pm
 const FPL_UNLOCK_HOUR = 20; // 8:00pm
 function isFplLocked(date) {
   if (!FPL_GAMEDAYS.includes(date.getDay())) return false;
@@ -899,10 +899,18 @@ export default function App() {
 
   // Applies a points delta (from one player's stat change) to every FPL squad that has them picked.
   // Captains earn double. This is what makes FPL scoring "live" — it fires on every stat save.
+  //
+  // IMPORTANT: this fetches a FRESH team list from Supabase instead of using the local `fplTeams`
+  // state. The admin's browser only loads `fplTeams` once on mount and after its own writes — it
+  // never sees squad changes other managers save from their own phones. Using the stale local
+  // state here meant a manager who added a player AFTER the admin's tab loaded could be silently
+  // skipped when that player's stats were next updated, even though the DB already had them on
+  // the roster. Reading straight from Supabase right before applying the delta fixes that.
   async function applyFplPointsDelta(playerId, pointsDelta) {
     if (!pointsDelta) return;
     try {
-      const affected = fplTeams.filter((team) => (team.player_ids || []).includes(playerId));
+      const freshTeams = await sbFetch("fpl_teams?select=*");
+      const affected = freshTeams.filter((team) => (team.player_ids || []).includes(playerId));
       if (!affected.length) return;
       await Promise.all(affected.map((team) => {
         const isCaptain = team.captain_id === playerId;
@@ -1215,7 +1223,11 @@ export default function App() {
       await loadFplData();
       setFplEditing(false);
     } catch (e) {
-      showToast("Failed to save team. Did you create the fpl_teams table?", "error");
+      // Surface the real Supabase error (usually a missing column) instead of a generic
+      // dead-end message — this is almost always a schema migration that hasn't been run yet.
+      let detail = e && e.message ? e.message : "";
+      try { detail = JSON.parse(detail).message || detail; } catch (_) { /* not JSON, use as-is */ }
+      showToast(`Failed to save team: ${detail || "unknown error"}`, "error");
     } finally {
       setFplSaving(false);
     }
@@ -1743,7 +1755,7 @@ export default function App() {
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ background: "linear-gradient(135deg, #16a34a11, #0f0f23)", border: "1px solid #16a34a33", borderRadius: 16, padding: "12px 16px", fontSize: 12, color: t.textDim, lineHeight: 1.5 }}>
-                🎮 Build a squad of {FPL_SQUAD_SIZE} starters + {FPL_SUB_SIZE} subs within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Subs cost the same as starters but only earn ⅓ points. Prices are set by the admin and drift a little each week — up OR down — based on that week's performance, but a player you already own never costs you more just because their price rose. You get {FPL_FREE_TRANSFERS_PER_GAMEDAY} free transfers per gameday — extra swaps cost {FPL_TRANSFER_PENALTY} points each. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated. Squads lock at 5pm and reopen at 8pm on gamedays (Sun, Mon, Wed, Fri, Sat).
+                🎮 Build a squad of {FPL_SQUAD_SIZE} starters + {FPL_SUB_SIZE} subs within a ₦{FPL_BUDGET}m budget (plus a free static goalkeeper). Subs cost the same as starters but only earn ⅓ points. Prices are set by the admin and drift a little each week — up OR down — based on that week's performance, but a player you already own never costs you more just because their price rose. You get {FPL_FREE_TRANSFERS_PER_GAMEDAY} free transfers per gameday — extra swaps cost {FPL_TRANSFER_PENALTY} points each. Pick a captain for 2× points. Your squad earns points automatically whenever stats are updated. Squads lock at 5:30pm and reopen at 8pm on gamedays (Sun, Mon, Wed, Fri, Sat).
               </div>
 
               {locked && (
