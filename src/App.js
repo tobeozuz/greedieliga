@@ -767,6 +767,9 @@ export default function App() {
   const [fplSearchQ, setFplSearchQ] = useState("");
   const [priceEditId, setPriceEditId] = useState(null);
   const [priceEditValue, setPriceEditValue] = useState("");
+  const [correctTeamId, setCorrectTeamId] = useState(""); // manual points-correction panel: which squad
+  const [correctPlayerId, setCorrectPlayerId] = useState(""); // which of that squad's players
+  const [correctAmount, setCorrectAmount] = useState(""); // points to add (negative to subtract)
   const [viewingTeam, setViewingTeam] = useState(null); // an fpl_teams row being viewed read-only from the leaderboard
   const [now, setNow] = useState(() => new Date()); // ticks so the squad lock window flips live, no refresh needed
 
@@ -926,6 +929,35 @@ export default function App() {
       await loadFplData();
     } catch (e) {
       console.warn("Greedie Liga: FPL scoring update failed", e);
+    }
+  }
+
+  // Manual one-off top-up/correction for a single squad + player, e.g. to backfill points a
+  // squad missed because of the stale-data bug fixed above (only affects rows saved before that
+  // fix went live). Adds `amount` (can be negative) to just that one team's total and that one
+  // player's ledger entry — every other squad is untouched. Always re-reads the team fresh first
+  // so it's never fighting yesterday's cached numbers.
+  async function applyManualCorrection() {
+    if (!correctTeamId || !correctPlayerId || !correctAmount.trim()) { showToast("Pick a squad, a player, and an amount.", "error"); return; }
+    const amount = Math.round(parseFloat(correctAmount));
+    if (isNaN(amount) || amount === 0) { showToast("Enter a non-zero whole number of points.", "error"); return; }
+    setSaving(true);
+    try {
+      const rows = await sbFetch(`fpl_teams?id=eq.${correctTeamId}&select=*`);
+      const team = rows[0];
+      if (!team) { showToast("Squad not found — try refreshing.", "error"); return; }
+      const playerId = players.find((p) => String(p.id) === String(correctPlayerId))?.id ?? correctPlayerId;
+      const newTotal = (team.total_points || 0) + amount;
+      const newPlayerPoints = { ...(team.player_points || {}) };
+      newPlayerPoints[playerId] = (newPlayerPoints[playerId] || 0) + amount;
+      await sbFetch(`fpl_teams?id=eq.${team.id}`, { method: "PATCH", body: JSON.stringify({ total_points: newTotal, player_points: newPlayerPoints, updated_at: new Date().toISOString() }) });
+      await loadFplData();
+      setCorrectTeamId(""); setCorrectPlayerId(""); setCorrectAmount("");
+      showToast(`Applied ${amount > 0 ? "+" : ""}${amount} pts. ✅`);
+    } catch (e) {
+      showToast("Correction failed. Try again.", "error");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -1796,6 +1828,37 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {isAdmin && (() => {
+                const correctionTeam = leaderboard.find((tm) => String(tm.id) === String(correctTeamId));
+                const correctionTeamPlayers = correctionTeam ? (correctionTeam.player_ids || []).map((id) => players.find((p) => p.id === id)).filter(Boolean) : [];
+                const currentLedger = correctionTeam && correctPlayerId ? (correctionTeam.player_points || {})[players.find((p) => String(p.id) === String(correctPlayerId))?.id] || 0 : null;
+                return (
+                  <div style={{ background: t.cardBg, border: "1px solid #6d28d966", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, letterSpacing: 2, color: "#a78bfa" }}>🛠️ ADMIN · MANUAL POINTS CORRECTION</div>
+                    <div style={{ fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>One-off top-up for a single squad's player, e.g. to backfill points a squad missed. Adds the amount you enter to just that squad's total and that player's ledger entry — nothing else changes. Use a negative number to subtract.</div>
+                    <select value={correctTeamId} onChange={(e) => { setCorrectTeamId(e.target.value); setCorrectPlayerId(""); }} style={{ background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 8, padding: "10px 12px", color: t.text, fontSize: 13 }}>
+                      <option value="">Select squad…</option>
+                      {leaderboard.map((tm) => <option key={tm.id} value={tm.id}>{tm.managerName}</option>)}
+                    </select>
+                    {correctionTeam && (
+                      <select value={correctPlayerId} onChange={(e) => setCorrectPlayerId(e.target.value)} style={{ background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 8, padding: "10px 12px", color: t.text, fontSize: 13 }}>
+                        <option value="">Select player…</option>
+                        {correctionTeamPlayers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    )}
+                    {correctPlayerId && (
+                      <>
+                        <div style={{ fontSize: 11, color: t.textFaint }}>Currently on {correctionTeam.managerName}'s ledger: {currentLedger} pts</div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <input type="number" placeholder="Points to add (e.g. 8 or -4)" value={correctAmount} onChange={(e) => setCorrectAmount(e.target.value)} onKeyDown={(e) => e.key === "Enter" && applyManualCorrection()} style={{ flex: 1, background: t.inputBg, border: `1px solid ${t.borderLight}`, borderRadius: 8, padding: "10px 12px", color: t.text, fontSize: 13 }} />
+                          <button onClick={applyManualCorrection} disabled={saving} style={{ background: "linear-gradient(135deg, #6d28d9, #a78bfa)", border: "none", borderRadius: 8, padding: "10px 16px", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 13, opacity: saving ? 0.6 : 1 }}>Apply</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
 
               {isAdmin && overBudgetTeams.length > 0 && (
                 <div style={{ background: t.cardBg, border: "1px solid #ef444466", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
